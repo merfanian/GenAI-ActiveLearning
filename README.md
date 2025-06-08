@@ -23,10 +23,21 @@ Install dependencies:
 pip install -r requirements.txt
 ```
 
-Set up your OpenAI API key in a `.env` file at the project root:
+Set up your OpenAI API key in a `.env` file at the project root.  The image
+generation backend can be selected with the `GENERATION_PROVIDER` variable.  By
+default `openai` is used.  When using the local generator provide the API
+configuration as shown below:
 
 ```bash
 echo "OPENAI_API_KEY=your_api_key_here" > .env
+# choose either 'openai' or 'local'
+echo "GENERATION_PROVIDER=openai" >> .env
+# settings for the local generator
+echo "LOCAL_GEN_API_URL=http://localhost" >> .env
+echo "LOCAL_GEN_PORT=8001" >> .env
+echo "LOCAL_MASK_ENDPOINT=/v1/images/masks" >> .env
+echo "LOCAL_GENERATE_ENDPOINT=/v1/images/edits" >> .env
+echo "LOCAL_LABEL_ENDPOINT=/v1/images/labels" >> .env
 ```
 
 ## Usage

@@ -1,21 +1,19 @@
-import base64
-import io
 import logging
-import os
-import urllib.request
 import uuid
 
-from dotenv import load_dotenv
-from openai import OpenAI
-
-client = OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
 from PIL import Image
 import numpy as np
 
 from services.model_service import predict, get_current_model_path
-from services.data_service import get_holdout_metadata_df, get_holdout_image_paths_and_labels, add_augmented_data
+from services.data_service import (
+    get_holdout_metadata_df,
+    get_holdout_image_paths_and_labels,
+)
 from utils.config import AUGMENTED_IMAGES_DIR
 from utils.attribute_mappings import ATTRIBUTE_VALUE_MAPPING, TARGET_LABEL_MAPPING
+from services.generation_clients import get_generation_client
+
+_generator = get_generation_client()
 
 
 def generate_image_and_get_label(attributes_for_generation: dict, num_images: int = 5) -> list[dict]:
@@ -79,31 +77,12 @@ def generate_image_and_get_label(attributes_for_generation: dict, num_images: in
 
     for guide_path, _, _ in selected:
         logging.debug(f"Generating inpainted image using guide image path: {guide_path}")
-        guide_img = Image.open(guide_path).convert("RGBA")
-        mask = Image.new("RGBA", guide_img.size, (255, 255, 255, 255))
-        mask_io = io.BytesIO()
-        mask.save(mask_io, format="PNG")
-        mask_io.seek(0)
-
-        with open(guide_path, "rb") as guide_file:
-            try:
-                response = client.images.edit(
-                    image=[guide_file], prompt=prompt_gen, n=1, model="gpt-image-1",
-                )
-                logging.debug("Used generate_edit for image generation")
-            except Exception as e:
-                logging.error(f"Failed to generate edit for image generation: {e}")
-                # response = client.images.generate(prompt=prompt_gen, n=1, size="256x256")
-                # logging.debug("Fallback to generate for image generation")
-
-        image_base64 = response.data[0].b64_json
-        image_bytes = base64.b64decode(image_base64)
+        generated_image = _generator.generate_image(guide_path, prompt_gen)
 
         filename = f"{uuid.uuid4().hex}.png"
         out_path = AUGMENTED_IMAGES_DIR / filename
 
-        image = Image.open(io.BytesIO(image_bytes))
-        image.save(out_path)
+        generated_image.save(out_path)
         logging.debug(f"Saved generated image to {out_path}")
 
         target_name = TARGET_LABEL_MAPPING["name"]
@@ -115,10 +94,7 @@ def generate_image_and_get_label(attributes_for_generation: dict, num_images: in
         )
         logging.debug(f"Labeling prompt: {prompt_label}")
         logging.info(f"Labeling prompt: {prompt_label}")
-        chat_resp = client.chat.completions.create(
-            model="gpt-3.5-turbo", messages=[{"role": "user", "content": prompt_label}], temperature=0
-        )
-        llm_label_str = chat_resp.choices[0].message.content.strip().lower()
+        llm_label_str = _generator.get_label(generated_image, prompt_label, label_options).lower()
         logging.debug(f"LLM raw label string: {llm_label_str}")
 
         inv_map = {v.lower(): k for k, v in TARGET_LABEL_MAPPING["mapping"].items()}
