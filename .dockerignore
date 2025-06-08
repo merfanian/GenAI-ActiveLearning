@@ -1,0 +1,7 @@
+__pycache__/
+*.py[cod]
+*.db
+*.sqlite
+augmented_images/
+trained_models/
+.env
