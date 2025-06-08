@@ -40,6 +40,15 @@ echo "LOCAL_GENERATE_ENDPOINT=/v1/images/edits" >> .env
 echo "LOCAL_LABEL_ENDPOINT=/v1/images/labels" >> .env
 ```
 
+When using standalone generator services for masking, image generation and
+labeling, you can instead provide full URLs for each endpoint:
+
+```bash
+echo "LOCAL_MASK_URL=http://mask-generator:8000/v1/images/masks" >> .env
+echo "LOCAL_GENERATE_URL=http://image-generator:8000/v1/images/edits" >> .env
+echo "LOCAL_LABEL_URL=http://labeler:8000/v1/images/labels" >> .env
+```
+
 ## Usage
 
 Start the server:
@@ -47,6 +56,22 @@ Start the server:
 ```bash
 uvicorn main:app --reload
 ```
+
+### Docker
+
+To run ChameleonV2 and the accompanying local generator services with
+`docker-compose`:
+
+```bash
+docker-compose up --build
+```
+
+The compose file starts this application together with the mask generator,
+image generator and labeler containers on a shared network. Persistent
+volumes are mounted for the `augmented_images` and `trained_models`
+directories so that data is preserved between runs. Environment variables
+can be stored in a local `.env` file which `docker-compose` will load
+automatically.
 
 ## Generate UTKFace images from pixel data
 
