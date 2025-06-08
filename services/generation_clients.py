@@ -53,13 +53,31 @@ class OpenAIGenerationClient(AbstractGenerationClient):
 
 class LocalGenerationClient(AbstractGenerationClient):
     def __init__(self) -> None:
-        base_url = os.getenv("LOCAL_GEN_API_URL", "http://localhost")
-        port = os.getenv("LOCAL_GEN_PORT")
-        if port:
-            base_url = f"{base_url}:{port}"
-        self.mask_url = f"{base_url}{os.getenv('LOCAL_MASK_ENDPOINT', '/v1/images/masks')}"
-        self.gen_url = f"{base_url}{os.getenv('LOCAL_GENERATE_ENDPOINT', '/v1/images/edits')}"
-        self.label_url = f"{base_url}{os.getenv('LOCAL_LABEL_ENDPOINT', '/v1/images/labels')}"
+        mask_url = os.getenv("LOCAL_MASK_URL")
+        generate_url = os.getenv("LOCAL_GENERATE_URL")
+        label_url = os.getenv("LOCAL_LABEL_URL")
+
+        if not (mask_url and generate_url and label_url):
+            base_url = os.getenv("LOCAL_GEN_API_URL", "http://localhost")
+            port = os.getenv("LOCAL_GEN_PORT")
+            if port:
+                base_url = f"{base_url}:{port}"
+            self.mask_url = os.getenv(
+                "LOCAL_MASK_URL",
+                f"{base_url}{os.getenv('LOCAL_MASK_ENDPOINT', '/v1/images/masks')}"
+            )
+            self.gen_url = os.getenv(
+                "LOCAL_GENERATE_URL",
+                f"{base_url}{os.getenv('LOCAL_GENERATE_ENDPOINT', '/v1/images/edits')}"
+            )
+            self.label_url = os.getenv(
+                "LOCAL_LABEL_URL",
+                f"{base_url}{os.getenv('LOCAL_LABEL_ENDPOINT', '/v1/images/labels')}"
+            )
+        else:
+            self.mask_url = mask_url
+            self.gen_url = generate_url
+            self.label_url = label_url
 
     def generate_image(self, guide_image_path: str, prompt: str) -> Image.Image:
         with open(guide_image_path, "rb") as f:

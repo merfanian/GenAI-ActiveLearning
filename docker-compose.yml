@@ -1,0 +1,36 @@
+version: '3.8'
+services:
+  chameleon:
+    build: .
+    ports:
+      - "8000:8000"
+    environment:
+      GENERATION_PROVIDER: local
+      LOCAL_MASK_URL: http://mask-generator:8000/v1/images/masks
+      LOCAL_GENERATE_URL: http://image-generator:8000/v1/images/edits
+      LOCAL_LABEL_URL: http://labeler:8000/v1/images/labels
+    depends_on:
+      - mask-generator
+      - image-generator
+      - labeler
+    networks:
+      - chameleon-net
+
+  mask-generator:
+    image: merfanian/mask-generator
+    networks:
+      - chameleon-net
+
+  image-generator:
+    image: merfanian/image-generator
+    networks:
+      - chameleon-net
+
+  labeler:
+    image: merfanian/labeler
+    networks:
+      - chameleon-net
+
+networks:
+  chameleon-net:
+    driver: bridge
