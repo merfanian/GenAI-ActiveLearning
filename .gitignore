@@ -36,3 +36,7 @@ temp/
 
 # Secrets
 .env
+augmented_images/
+resources/
+trained_models/
+

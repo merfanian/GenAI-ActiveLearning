@@ -104,11 +104,11 @@ def load_augmented_metadata_csv() -> list[dict]:
         return list(reader)
 
 
-def add_augmented_data(generated_image_path: str, attributes: dict, llm_acquired_label: str):
+def add_augmented_data(filename: str, attributes: dict, llm_acquired_label: str):
     logging.debug(
-        f"add_augmented_data called with generated_image_path={generated_image_path}, attributes={attributes}, llm_acquired_label={llm_acquired_label}")
+        f"add_augmented_data called with generated_filename={filename}, attributes={attributes}, llm_acquired_label={llm_acquired_label}")
     # Only append to augmented metadata CSV, do not add to _metadata_df
-    append_to_augmented_metadata_csv(generated_image_path, attributes, llm_acquired_label)
+    append_to_augmented_metadata_csv(filename, attributes, llm_acquired_label)
 
 
 def get_metadata_df() -> pd.DataFrame:

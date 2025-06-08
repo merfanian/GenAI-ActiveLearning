@@ -129,7 +129,7 @@ def generate_image_and_get_label(attributes_for_generation: dict, num_images: in
 
         results.append(
             {
-                "image_path": str(out_path),
+                "filename": str(filename),
                 "attributes_used": attributes_for_generation,
                 "llm_acquired_label": llm_label,
             }

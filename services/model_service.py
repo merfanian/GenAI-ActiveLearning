@@ -51,7 +51,7 @@ class ImageDataset(Dataset):
         return img, self.targets[idx]
 
 
-def train_model(image_paths: list[str], labels: list[str], existing_model_path: str = None) -> str:
+def train_model(image_paths: list[str], labels: list[str], existing_model_path: str = None, updated_model_path: str = None) -> str:
     logging.debug(f"train_model called with image_paths={len(image_paths)} images, existing_model_path={existing_model_path}")
     logging.info(f"Training model with {len(image_paths)} images. Base model: {existing_model_path}")
     TRAINED_MODELS_DIR.mkdir(parents=True, exist_ok=True)
@@ -88,7 +88,7 @@ def train_model(image_paths: list[str], labels: list[str], existing_model_path: 
             loss.backward()
             optimizer.step()
 
-    model_file = TRAINED_MODELS_DIR / "model.pth"
+    model_file = TRAINED_MODELS_DIR / "model.pth" if not updated_model_path else TRAINED_MODELS_DIR / updated_model_path
     torch.save({"model_state_dict": model.state_dict(), "idx_to_label": idx_to_label}, model_file)
     logging.debug(f"Saved trained model to {model_file}")
     return str(model_file)

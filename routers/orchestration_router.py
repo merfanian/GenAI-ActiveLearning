@@ -140,12 +140,12 @@ def run_iterative_augmentation_cycle(req: AugmentationCycleRequest):
         generated = llm_augmentation_service.generate_image_and_get_label(worst_raw["attributes"], num_to_generate)
         logging.debug(f"Generated augmented items: {generated}")
         for item in generated:
-            data_service.add_augmented_data(item["image_path"], item["attributes_used"], item["llm_acquired_label"])
+            data_service.add_augmented_data(item["filename"], item["attributes_used"], item["llm_acquired_label"])
         logging.debug("Added augmented data to dataset")
         remaining = req.augmentation_budget_remaining - num_to_generate
         all_image_paths, all_labels = data_service.get_train_val_image_paths_and_labels(include_augmented=True)
         logging.debug(f"Retraining model with augmented data: total images={len(all_image_paths)}")
-        new_model_path = model_service.train_model(all_image_paths, all_labels, existing_model_path=model_path)
+        new_model_path = model_service.train_model(all_image_paths, all_labels, existing_model_path=model_path, updated_model_path="augmented_model.pth")
         logging.debug(f"New model trained at path: {new_model_path}")
         model_service.set_current_model_path(new_model_path)
         serialized_worst = _serialize_worst_group(worst_raw)
