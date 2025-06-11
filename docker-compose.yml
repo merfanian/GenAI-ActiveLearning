@@ -11,9 +11,9 @@ services:
       - .env
     environment:
       GENERATION_PROVIDER: local
-      LOCAL_MASK_URL: http://mask-generator:8000/v1/images/masks
-      LOCAL_GENERATE_URL: http://image-generator:8000/v1/images/edits
-      LOCAL_LABEL_URL: http://labeler:8000/v1/images/labels
+      LOCAL_MASK_URL: http://mask-generator/v1/images/masks
+      LOCAL_GENERATE_URL: http://image-generator/v1/images/edits
+      LOCAL_LABEL_URL: http://labeler/v1/images/labels
     depends_on:
       - mask-generator
       - image-generator
@@ -22,17 +22,25 @@ services:
       - chameleon-net
 
   mask-generator:
-    image: merfanian/mask-generator
+    image: mask-generator
+    ports:
+      - "8001:80"
     networks:
       - chameleon-net
 
   image-generator:
-    image: merfanian/image-generator
+    image: image-generator
+    ports:
+      - "8002:80"
     networks:
       - chameleon-net
+    env_file:
+      - .env
 
   labeler:
     image: merfanian/labeler
+    ports:
+      - "8003:80"
     networks:
       - chameleon-net
 
