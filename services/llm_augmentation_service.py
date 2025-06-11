@@ -94,14 +94,8 @@ def generate_image_and_get_label(attributes_for_generation: dict, num_images: in
         )
         logging.debug(f"Labeling prompt: {prompt_label}")
         logging.info(f"Labeling prompt: {prompt_label}")
-        llm_label_str = _generator.get_label(generated_image, prompt_label, label_options).lower()
-        logging.debug(f"LLM raw label string: {llm_label_str}")
-
-        inv_map = {v.lower(): k for k, v in TARGET_LABEL_MAPPING["mapping"].items()}
-        if llm_label_str not in inv_map:
-            logging.debug(f"Unexpected LLM label string: {llm_label_str}")
-            raise ValueError(f"Unexpected label from LLM: {llm_label_str}")
-        llm_label = inv_map[llm_label_str]
+        llm_label = _generator.get_label(generated_image, prompt_label, label_options)
+        logging.debug(f"LLM raw label string: {llm_label}")
 
         results.append(
             {
