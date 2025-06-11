@@ -4,6 +4,7 @@ from pathlib import Path
 
 import pandas as pd
 from sklearn.model_selection import train_test_split
+import random
 
 from utils.config import AUGMENTED_IMAGES_DIR
 
@@ -14,16 +15,20 @@ _SPLIT_SEED = 42
 _TEST_FRAC = 0.2
 _HOLDOUT_FRAC = 0.2
 _VAL_FRAC = 0.2
+_MIN_TEST_SAMPLES_PER_GROUP = 5
 
 AUGMENTED_METADATA_CSV = AUGMENTED_IMAGES_DIR / "augmented_dataset_metadata.csv"
 
 
 def load_and_validate_dataset(image_dir_path: str, metadata_csv_path: str) -> dict:
     logging.debug(
-        f"load_and_validate_dataset called with image_dir_path={image_dir_path}, metadata_csv_path={metadata_csv_path}")
+        f"load_and_validate_dataset called with image_dir_path={image_dir_path}, metadata_csv_path={metadata_csv_path}"
+    )
     try:
         df = pd.read_csv(metadata_csv_path)
-        logging.debug(f"Loaded metadata CSV with columns {df.columns.tolist()} and {len(df)} records")
+        logging.debug(
+            f"Loaded metadata CSV with columns {df.columns.tolist()} and {len(df)} records"
+        )
     except Exception as e:
         logging.debug(f"Failed to read metadata CSV: {e}", exc_info=True)
         return {"error": f"Failed to read metadata CSV: {e}"}
@@ -41,31 +46,55 @@ def load_and_validate_dataset(image_dir_path: str, metadata_csv_path: str) -> di
     _image_dir_path = image_dir_path
 
     logging.debug("Splitting dataset into train/val/holdout/test")
-    df['split'] = ''
-    # split off test set
+    df["split"] = ""
+
+    # initial test split
     train_val_holdout_idx, test_idx = train_test_split(
         df.index, test_size=_TEST_FRAC, random_state=_SPLIT_SEED
     )
-    # split off holdout set
-    holdout_frac_rel = _HOLDOUT_FRAC / (1 - _TEST_FRAC)
+
+    # ensure a minimum number of test samples per attribute group
+    attrs = [c for c in df.columns if c not in ("filename", "label", "split")]
+    if attrs:
+        test_set = set(test_idx)
+        remaining_set = set(train_val_holdout_idx)
+        rng = random.Random(_SPLIT_SEED)
+        for _, group_df in df.groupby(attrs):
+            group_indices = set(group_df.index)
+            current = test_set & group_indices
+            missing = _MIN_TEST_SAMPLES_PER_GROUP - len(current)
+            if missing > 0:
+                available = list(group_indices - test_set)
+                rng.shuffle(available)
+                selected = available[:missing]
+                test_set.update(selected)
+                remaining_set.difference_update(selected)
+        test_idx = list(test_set)
+        train_val_holdout_idx = list(remaining_set)
+
+    test_frac_actual = len(test_idx) / len(df)
+    holdout_frac_rel = _HOLDOUT_FRAC / (1 - test_frac_actual)
     train_val_idx, holdout_idx = train_test_split(
         train_val_holdout_idx, test_size=holdout_frac_rel, random_state=_SPLIT_SEED
     )
-    # split off validation set
-    val_frac_rel = _VAL_FRAC / (1 - _TEST_FRAC - _HOLDOUT_FRAC)
+    val_frac_rel = _VAL_FRAC / (1 - test_frac_actual - _HOLDOUT_FRAC)
     train_idx, val_idx = train_test_split(
         train_val_idx, test_size=val_frac_rel, random_state=_SPLIT_SEED
     )
-    df.loc[train_idx, 'split'] = 'train'
-    df.loc[val_idx, 'split'] = 'val'
-    df.loc[holdout_idx, 'split'] = 'holdout'
-    df.loc[test_idx, 'split'] = 'test'
+    df.loc[train_idx, "split"] = "train"
+    df.loc[val_idx, "split"] = "val"
+    df.loc[holdout_idx, "split"] = "holdout"
+    df.loc[test_idx, "split"] = "test"
     logging.debug(
-        f"Dataset splits: train={len(train_idx)}, val={len(val_idx)}, holdout={len(holdout_idx)}, test={len(test_idx)}")
+        f"Dataset splits: train={len(train_idx)}, val={len(val_idx)}, holdout={len(holdout_idx)}, test={len(test_idx)}"
+    )
     _metadata_df = df.copy()
-    logging.debug(f"Metadata DataFrame shape: {_metadata_df.shape}, columns: {_metadata_df.columns.tolist()}")
+    logging.debug(
+        f"Metadata DataFrame shape: {_metadata_df.shape}, columns: {_metadata_df.columns.tolist()}"
+    )
     logging.info(
-        f"Dataset loaded: directory={image_dir_path}, metadata_csv={metadata_csv_path}, records={len(_metadata_df)}")
+        f"Dataset loaded: directory={image_dir_path}, metadata_csv={metadata_csv_path}, records={len(_metadata_df)}"
+    )
     return {"message": "Dataset loaded successfully."}
 
 
@@ -75,7 +104,11 @@ def get_current_dataset_info() -> dict:
         return {"error": "Dataset not loaded."}
     df = _metadata_df
     attrs = [c for c in df.columns if c not in ("filename", "label", "split")]
-    return {"num_images": len(df), "attribute_columns": attrs, "num_unique_labels": int(df["label"].nunique())}
+    return {
+        "num_images": len(df),
+        "attribute_columns": attrs,
+        "num_unique_labels": int(df["label"].nunique()),
+    }
 
 
 def append_to_augmented_metadata_csv(filename: str, attributes: dict, label: str):
@@ -106,7 +139,8 @@ def load_augmented_metadata_csv() -> list[dict]:
 
 def add_augmented_data(filename: str, attributes: dict, llm_acquired_label: str):
     logging.debug(
-        f"add_augmented_data called with generated_filename={filename}, attributes={attributes}, llm_acquired_label={llm_acquired_label}")
+        f"add_augmented_data called with generated_filename={filename}, attributes={attributes}, llm_acquired_label={llm_acquired_label}"
+    )
     # Only append to augmented metadata CSV, do not add to _metadata_df
     append_to_augmented_metadata_csv(filename, attributes, llm_acquired_label)
 
@@ -135,11 +169,15 @@ def get_image_paths_and_labels() -> (list[str], list[str]):
     return paths, labels
 
 
-def get_train_val_image_paths_and_labels(include_augmented: bool = False) -> (list[str], list[str]):
-    logging.debug(f"get_train_val_image_paths_and_labels called with include_augmented={include_augmented}")
+def get_train_val_image_paths_and_labels(
+    include_augmented: bool = False,
+) -> (list[str], list[str]):
+    logging.debug(
+        f"get_train_val_image_paths_and_labels called with include_augmented={include_augmented}"
+    )
     if _metadata_df is None or _image_dir_path is None:
         raise ValueError("Dataset not loaded.")
-    df = _metadata_df[_metadata_df['split'].isin(['train', 'val'])]
+    df = _metadata_df[_metadata_df["split"].isin(["train", "val"])]
     paths, labels = [], []
     for f in df["filename"].tolist():
         original = Path(_image_dir_path) / f
@@ -151,7 +189,9 @@ def get_train_val_image_paths_and_labels(include_augmented: bool = False) -> (li
         for row in aug_rows:
             paths.append(Path(AUGMENTED_IMAGES_DIR) / str(row["filename"]))
             labels.append(int(row["label"]))
-    logging.debug(f"Returning {len(paths)} train/val image paths and labels (include_augmented={include_augmented})")
+    logging.debug(
+        f"Returning {len(paths)} train/val image paths and labels (include_augmented={include_augmented})"
+    )
     return paths, labels
 
 
@@ -159,7 +199,7 @@ def get_test_image_paths_and_labels() -> (list[str], list[str]):
     logging.debug("get_test_image_paths_and_labels called")
     if _metadata_df is None or _image_dir_path is None:
         raise ValueError("Dataset not loaded.")
-    df = _metadata_df[_metadata_df['split'] == 'test']
+    df = _metadata_df[_metadata_df["split"] == "test"]
     paths, labels = [], []
     for f in df["filename"].tolist():
         original = Path(_image_dir_path) / f
@@ -173,14 +213,14 @@ def get_test_metadata_df() -> pd.DataFrame:
     logging.debug("get_test_metadata_df called")
     if _metadata_df is None:
         raise ValueError("Dataset not loaded.")
-    return _metadata_df[_metadata_df['split'] == 'test'].copy()
+    return _metadata_df[_metadata_df["split"] == "test"].copy()
 
 
 def get_holdout_image_paths_and_labels() -> (list[str], list[str]):
     logging.debug("get_holdout_image_paths_and_labels called")
     if _metadata_df is None or _image_dir_path is None:
         raise ValueError("Dataset not loaded.")
-    df = _metadata_df[_metadata_df['split'] == 'holdout']
+    df = _metadata_df[_metadata_df["split"] == "holdout"]
     paths, labels = [], []
     for f in df["filename"].tolist():
         original = Path(_image_dir_path) / f
@@ -194,4 +234,4 @@ def get_holdout_metadata_df() -> pd.DataFrame:
     logging.debug("get_holdout_metadata_df called")
     if _metadata_df is None:
         raise ValueError("Dataset not loaded.")
-    return _metadata_df[_metadata_df['split'] == 'holdout'].copy()
+    return _metadata_df[_metadata_df["split"] == "holdout"].copy()
