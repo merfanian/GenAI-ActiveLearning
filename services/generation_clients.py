@@ -12,6 +12,11 @@ import requests
 from dotenv import load_dotenv
 from PIL import Image
 from openai import OpenAI
+import torch
+import torchvision.transforms as transforms
+
+from services.model_service import SimpleCNN
+from utils.config import TRAINED_MODELS_DIR
 
 load_dotenv(".env")
 
@@ -57,6 +62,18 @@ class LocalGenerationClient(AbstractGenerationClient):
         self.mask_url = os.getenv("LOCAL_MASK_URL")
         self.generate_url = os.getenv("LOCAL_GENERATE_URL")
         self.label_url = os.getenv("LOCAL_LABEL_URL")
+        self.label_mode = os.getenv("LOCAL_LABEL_MODE", "url").lower()
+        if self.label_mode == "model":
+            model_path = TRAINED_MODELS_DIR / "perfect.pth"
+            checkpoint = torch.load(model_path, map_location="cpu")
+            self.idx_to_label = checkpoint["idx_to_label"]
+            self.model = SimpleCNN(num_classes=len(self.idx_to_label))
+            self.model.load_state_dict(checkpoint["model_state_dict"])
+            self.model.eval()
+            self.transform = transforms.Compose([
+                transforms.Resize((256, 256)),
+                transforms.ToTensor(),
+            ])
 
     def generate_image(self, guide_image_path: str, prompt: str) -> Image.Image:
         # --- 1. Load & (conditionally) convert to PNG ---
@@ -106,6 +123,12 @@ class LocalGenerationClient(AbstractGenerationClient):
         return Image.open(io.BytesIO(out_bytes))
 
     def get_label(self, image: Image.Image, prompt: str, label_options: List[str]) -> str:
+        if self.label_mode == "model":
+            with torch.no_grad():
+                inp = self.transform(image).unsqueeze(0)
+                logits = self.model(inp)
+                pred_idx = int(torch.argmax(logits, dim=1).item())
+                return self.idx_to_label[pred_idx]
         buf = io.BytesIO()
         image.save(buf, format="PNG")
         buf.seek(0)
