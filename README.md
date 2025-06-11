@@ -102,10 +102,11 @@ image classification. Training runs for 3 epochs using the Adam optimizer.
 ## API Endpoints
 
 **Dataset splitting:** After `/setup_dataset`, the data is split into train (40%), validation (20%), holdout (20%), and
-test (20%) subsets using a fixed random seed. Endpoints `/train_initial_model` and `/run_iterative_augmentation_cycle`
-train on the combined train+validation sets, `/evaluate_fairness` evaluates performance on the test set, and guide
-images for augmentation are sampled from the holdout set only. The fairness endpoint requires the name of the model
-file (e.g. `model.pth`) to evaluate.
+test subsets. To obtain reliable fairness metrics, a minimum of five samples from every attribute group are placed in
+the test set even if this exceeds the nominal 20% split. Endpoints `/train_initial_model` and
+`/run_iterative_augmentation_cycle` train on the combined train+validation sets, `/evaluate_fairness` evaluates
+performance on the test set, and guide images for augmentation are sampled from the holdout set only. The fairness
+endpoint requires the name of the model file (e.g. `model.pth`) to evaluate.
 
 - `POST /setup_dataset`
 - `POST /train_initial_model` (optional JSON body `{"use_augmented": bool}`; when true, includes previously generated augmented images in the training data)
