@@ -85,6 +85,15 @@ To create individual image files from the pixel data stored in a CSV file inside
 python resources/extract_utkface_images.py path/to/utkface.zip utkface
 ```
 
+## Download Adience dataset
+
+Use the following utility to download the Adience benchmark and build a
+metadata CSV compatible with this application:
+
+```bash
+python resources/download_adience.py adience
+```
+
 ## Default Model
 
 A simple CNN (two convolutional layers and two fully connected layers) implemented in PyTorch is used by default for
