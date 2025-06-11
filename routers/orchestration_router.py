@@ -4,7 +4,7 @@ from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
 
 from services import data_service, model_service, fairness_service, llm_augmentation_service
-from utils.config import AUGMENTED_IMAGES_DIR
+from utils.config import AUGMENTED_IMAGES_DIR, TRAINED_MODELS_DIR
 
 
 def _serialize_group_performance(attrs_tuple, metrics):
@@ -79,13 +79,14 @@ def train_initial_model(req: TrainInitialModelRequest):
 
 
 @router.get("/evaluate_fairness")
-def evaluate_fairness():
-    logging.debug("evaluate_fairness called")
+def evaluate_fairness(model_name: str):
+    logging.debug(f"evaluate_fairness called with model_name={model_name}")
     try:
-        model_path = model_service.get_current_model_path()
-        logging.debug(f"Current model_path: {model_path}")
-        if not model_path:
-            raise HTTPException(status_code=400, detail="No model trained.")
+        model_file = TRAINED_MODELS_DIR / model_name
+        logging.debug(f"Resolved model_path: {model_file}")
+        if not model_file.exists():
+            raise HTTPException(status_code=400, detail="Model not found.")
+        model_path = str(model_file)
         df = data_service.get_test_metadata_df()
         logging.debug(f"Test metadata DataFrame obtained: {len(df)} records")
         image_paths, _ = data_service.get_test_image_paths_and_labels()
