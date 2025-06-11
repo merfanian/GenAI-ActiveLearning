@@ -38,5 +38,8 @@ temp/
 .env
 augmented_images/
 resources/
+!resources/
+!resources/*.py
+!resources/README.md
 trained_models/
 
