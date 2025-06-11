@@ -74,6 +74,8 @@ class LocalGenerationClient(AbstractGenerationClient):
                 transforms.Resize((256, 256)),
                 transforms.ToTensor(),
             ])
+        elif self.label_mode == "openai":
+            self.openai_client = OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
 
     def generate_image(self, guide_image_path: str, prompt: str) -> Image.Image:
         # --- 1. Load & (conditionally) convert to PNG ---
@@ -129,6 +131,26 @@ class LocalGenerationClient(AbstractGenerationClient):
                 logits = self.model(inp)
                 pred_idx = int(torch.argmax(logits, dim=1).item())
                 return self.idx_to_label[pred_idx]
+        elif self.label_mode == "openai":
+            buf = io.BytesIO()
+            image.save(buf, format="JPEG")
+            b64_image = base64.b64encode(buf.getvalue()).decode("utf-8")
+            response = self.openai_client.responses.create(
+                model="gpt-4.1",
+                input=[
+                    {
+                        "role": "user",
+                        "content": [
+                            {"type": "input_text", "text": prompt},
+                            {
+                                "type": "input_image",
+                                "image_url": f"data:image/jpeg;base64,{b64_image}",
+                            },
+                        ],
+                    }
+                ],
+            )
+            return response.output_text.strip()
         buf = io.BytesIO()
         image.save(buf, format="PNG")
         buf.seek(0)
