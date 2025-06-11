@@ -38,6 +38,9 @@ echo "LOCAL_GEN_PORT=8001" >> .env
 echo "LOCAL_MASK_ENDPOINT=/v1/images/masks" >> .env
 echo "LOCAL_GENERATE_ENDPOINT=/v1/images/edits" >> .env
 echo "LOCAL_LABEL_ENDPOINT=/v1/images/labels" >> .env
+# choose 'url' (default) to call a running labeler service or
+# 'model' to use the local perfect model at trained_models/perfect.pth
+echo "LOCAL_LABEL_MODE=url" >> .env
 ```
 
 When using standalone generator services for masking, image generation and
@@ -47,6 +50,7 @@ labeling, you can instead provide full URLs for each endpoint:
 echo "LOCAL_MASK_URL=http://mask-generator:8000/v1/images/masks" >> .env
 echo "LOCAL_GENERATE_URL=http://image-generator:8000/v1/images/edits" >> .env
 echo "LOCAL_LABEL_URL=http://labeler:8000/v1/images/labels" >> .env
+echo "LOCAL_LABEL_MODE=url" >> .env
 ```
 
 ## Usage
