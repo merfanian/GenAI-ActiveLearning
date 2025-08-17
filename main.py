@@ -8,12 +8,13 @@ load_dotenv(".env")
 from fastapi import FastAPI
 
 from routers.orchestration_router import router
+from routers.text_orchestration_router import router as text_router
 from utils.config import AUGMENTED_IMAGES_DIR, TRAINED_MODELS_DIR
+from utils.logging_config import LOGGING_CONFIG
 
-logging.basicConfig(level=logging.DEBUG)
-logging.debug(f"Logging initialized with level {logging.getLevelName(logging.getLogger().level)}")
 app = FastAPI()
 app.include_router(router)
+app.include_router(text_router)
 
 
 @app.on_event("startup")
@@ -26,4 +27,6 @@ async def startup_event():
 
 
 if __name__ == "__main__":
-    uvicorn.run("main:app", host="0.0.0.0", port=8000, reload=True)
+    uvicorn.run(
+        "main:app", host="0.0.0.0", port=8000, reload=True, log_config=LOGGING_CONFIG
+    )

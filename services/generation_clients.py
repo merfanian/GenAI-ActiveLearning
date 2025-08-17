@@ -1,172 +1,321 @@
 from __future__ import annotations
 
-import os
 import base64
 import io
 import logging
+import os
+import tempfile
 from abc import ABC, abstractmethod
 from pathlib import Path
 from typing import List
 
 import requests
-from dotenv import load_dotenv
-from PIL import Image
-from openai import OpenAI
 import torch
-import torchvision.transforms as transforms
-
-from services.model_service import SimpleCNN
-from utils.config import TRAINED_MODELS_DIR
+from PIL import Image
+from diffusers import AutoPipelineForInpainting, DiffusionPipeline, DEISMultistepScheduler
+from diffusers.utils import load_image
+from dotenv import load_dotenv
+from openai import OpenAI
 
 load_dotenv(".env")
 
 
 class AbstractGenerationClient(ABC):
-    @abstractmethod
-    def generate_image(self, guide_image_path: str, prompt: str) -> Image.Image:
-        pass
 
-    @abstractmethod
-    def get_label(self, image: Image.Image, prompt: str, label_options: List[str]) -> str:
-        pass
-
-
-class OpenAIGenerationClient(AbstractGenerationClient):
-    def __init__(self) -> None:
-        self.client = OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
-
-    def generate_image(self, guide_image_path: str, prompt: str) -> Image.Image:
-        with open(guide_image_path, "rb") as guide_file:
-            try:
-                response = self.client.images.edit(
-                    image=[guide_file], prompt=prompt, n=1, model="gpt-image-1"
-                )
-                logging.debug("Used generate_edit for image generation")
-            except Exception as e:
-                logging.error(f"Failed to generate edit for image generation: {e}")
-                raise
-        image_base64 = response.data[0].b64_json
-        return Image.open(io.BytesIO(base64.b64decode(image_base64)))
-
-    def get_label(self, image: Image.Image, prompt: str, label_options: List[str]) -> str:
-        chat_resp = self.client.chat.completions.create(
-            model="gpt-3.5-turbo",
-            messages=[{"role": "user", "content": prompt}],
-            temperature=0,
-        )
-        return chat_resp.choices[0].message.content.strip()
-
-
-class LocalGenerationClient(AbstractGenerationClient):
     def __init__(self) -> None:
         self.mask_url = os.getenv("LOCAL_MASK_URL")
-        self.generate_url = os.getenv("LOCAL_GENERATE_URL")
         self.label_url = os.getenv("LOCAL_LABEL_URL")
         self.label_mode = os.getenv("LOCAL_LABEL_MODE", "url").lower()
-        if self.label_mode == "model":
-            model_path = TRAINED_MODELS_DIR / "perfect.pth"
-            checkpoint = torch.load(model_path, map_location="cpu")
-            self.idx_to_label = checkpoint["idx_to_label"]
-            self.model = SimpleCNN(num_classes=len(self.idx_to_label))
-            self.model.load_state_dict(checkpoint["model_state_dict"])
-            self.model.eval()
-            self.transform = transforms.Compose([
-                transforms.Resize((256, 256)),
-                transforms.ToTensor(),
-            ])
-        elif self.label_mode == "openai":
+        if self.label_mode == "openai":
             self.openai_client = OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
 
-    def generate_image(self, guide_image_path: str, prompt: str) -> Image.Image:
-        # --- 1. Load & (conditionally) convert to PNG ---
-        img = Image.open(guide_image_path)
-        if img.format == "PNG":
-            # already PNG → just read bytes
-            with open(guide_image_path, "rb") as f:
-                img_bytes = f.read()
-            filename = os.path.basename(guide_image_path)
-        else:
-            # convert to PNG in-memory
-            buf = io.BytesIO()
-            img.save(buf, format="PNG")
-            img_bytes = buf.getvalue()
-            filename = Path(guide_image_path).with_suffix(".png").name
+    @abstractmethod
+    def generate_image(self, prompt: str, guide_image_path: str = None) -> Image.Image:
+        pass
 
-        # --- 2. Get mask from your mask-service endpoint ---
-        mask_resp = requests.post(
-            self.mask_url,
-            files={
-                # tell FastAPI/OpenAI this is a PNG
-                "image": (filename, img_bytes, "image/png")
-            },
-        )
-        mask_resp.raise_for_status()
-        mask_bytes = mask_resp.content
+    @abstractmethod
+    def generate_text(self, prompt: str, guide_text: str = None) -> str:
+        pass
 
-        # --- 3. Call the image-edit endpoint (always PNG) ---
-        gen_resp = requests.post(
-            self.generate_url,
-            files={
-                "image": (filename, img_bytes, "image/png"),
-                "mask": ("mask.png", mask_bytes, "image/png"),
-            },
-            data={
-                "prompt": prompt,
-                "n": "1",
-                "size": "512x512",
-            },
-        )
-        gen_resp.raise_for_status()
+    def get_label(
+        self, image: Image.Image, prompt: str, label_options: List[str]
+    ) -> str:
+        if self.label_mode == "human":
+            with tempfile.NamedTemporaryFile(suffix=".png", delete=False) as temp_f:
+                try:
+                    image.save(temp_f.name)
+                    print(f"\n--- Human Labeling Required ---")
+                    print(
+                        f"An image has been generated. Please review it at: {temp_f.name}"
+                    )
 
-        # --- 4. Decode & return PIL image ---
-        resp_json = gen_resp.json()
-        img_b64 = resp_json["data"][0]["b64_json"]
-        out_bytes = base64.b64decode(img_b64)
-        return Image.open(io.BytesIO(out_bytes))
+                    options_with_discard = label_options + ["discard"]
+                    print(f"Labeling prompt: {prompt}")
+                    print("Please choose one of the following options:")
+                    for i, option in enumerate(options_with_discard):
+                        print(f"  {i + 1}: {option}")
 
-    def get_label(self, image: Image.Image, prompt: str, label_options: List[str]) -> str:
-        if self.label_mode == "model":
-            with torch.no_grad():
-                inp = self.transform(image).unsqueeze(0)
-                logits = self.model(inp)
-                pred_idx = int(torch.argmax(logits, dim=1).item())
-                return self.idx_to_label[pred_idx]
-        elif self.label_mode == "openai":
+                    choice = -1
+                    while choice < 1 or choice > len(options_with_discard):
+                        try:
+                            raw_choice = input(
+                                f"Enter your choice (1-{len(options_with_discard)}): "
+                            )
+                            choice = int(raw_choice)
+                        except (ValueError, EOFError):
+                            choice = -1
+                        if choice < 1 or choice > len(options_with_discard):
+                            print("Invalid choice. Please try again.")
+
+                    chosen_option = options_with_discard[choice - 1]
+                    logging.info(f"User chose: {chosen_option}")
+                    return chosen_option
+                finally:
+                    os.remove(temp_f.name)
+
+        if self.label_mode == "openai":
             buf = io.BytesIO()
             image.save(buf, format="JPEG")
             b64_image = base64.b64encode(buf.getvalue()).decode("utf-8")
-            response = self.openai_client.responses.create(
-                model="gpt-4.1",
-                input=[
+            response = self.openai_client.chat.completions.create(
+                model="gpt-4-vision-preview",
+                messages=[
                     {
                         "role": "user",
                         "content": [
-                            {"type": "input_text", "text": prompt},
+                            {"type": "text", "text": prompt},
                             {
-                                "type": "input_image",
+                                "type": "image_url",
                                 "image_url": f"data:image/jpeg;base64,{b64_image}",
                             },
                         ],
                     }
                 ],
+                max_tokens=300,
             )
-            return response.output_text.strip()
-        buf = io.BytesIO()
-        image.save(buf, format="PNG")
-        buf.seek(0)
-        resp = requests.post(
-            self.label_url,
-            files={"image": ("image.png", buf.getvalue(), "image/png")},
-            data={"prompt": prompt},
+            return response.choices[0].message.content.strip()
+
+        with tempfile.NamedTemporaryFile(suffix=".jpg") as temp_image:
+            image.save(temp_image, format="JPEG")
+            temp_image.seek(0)
+            files = {"image": ("image.jpg", temp_image, "image/jpeg")}
+            response = requests.post(self.label_url, files=files)
+            response.raise_for_status()
+            result = response.json()
+            try:
+                gender = result[0].get("dominant_gender", "").lower()
+            except Exception:
+                logging.error(f"Unexpected response format: {result}")
+                gender = "woman"
+
+            if gender == "woman":
+                return "0"
+            return "1"
+
+    def get_text_label(self, text: str, prompt: str, label_options: List[str]) -> str:
+        if self.label_mode == "human":
+            print(f"\n--- Human Labeling Required ---")
+            print(f"Generated text: {text}")
+            options_with_discard = label_options + ["discard"]
+            print(f"Labeling prompt: {prompt}")
+            print("Please choose one of the following options:")
+            for i, option in enumerate(options_with_discard):
+                print(f"  {i + 1}: {option}")
+            choice = -1
+            while choice < 1 or choice > len(options_with_discard):
+                try:
+                    raw_choice = input(
+                        f"Enter your choice (1-{len(options_with_discard)}): "
+                    )
+                    choice = int(raw_choice)
+                except (ValueError, EOFError):
+                    choice = -1
+                if choice < 1 or choice > len(options_with_discard):
+                    print("Invalid choice. Please try again.")
+            chosen_option = options_with_discard[choice - 1]
+            logging.info(f"User chose: {chosen_option}")
+            return chosen_option
+
+        if self.label_mode == "openai":
+            response = self.openai_client.chat.completions.create(
+                model="gpt-4",
+                messages=[
+                    {
+                        "role": "system",
+                        "content": "You are a helpful assistant for text classification.",
+                    },
+                    {"role": "user", "content": f'{prompt}\n\nText: "{text}"'},
+                ],
+            )
+            return response.choices[0].message.content.strip()
+
+        # Fallback or other modes can be implemented here
+        return "neutral"
+
+
+class LocalInpaintingClient(AbstractGenerationClient):
+    def __init__(self) -> None:
+        super().__init__()
+        self.inpainting_pipeline = AutoPipelineForInpainting.from_pretrained(
+            "Lykon/dreamshaper-8-inpainting",
+            torch_dtype=torch.float16,
+            variant="fp16",
         )
-        resp.raise_for_status()
-        return resp.json().get("label", "").strip()
+        self.inpainting_pipeline.scheduler = DEISMultistepScheduler.from_config(self.inpainting_pipeline.scheduler.config)
+        self.inpainting_pipeline.to("cuda")
+
+        self.generation_pipeline = DiffusionPipeline.from_pretrained(
+            "stabilityai/stable-diffusion-xl-base-1.0",
+            torch_dtype=torch.float16,
+            use_safetensors=True,
+            variant="fp16",
+        ).to("cuda")
+
+    def generate_text(self, prompt: str, guide_text: str = None) -> str:
+        raise NotImplementedError("Local text generation is not supported.")
+
+    def generate_image(self, prompt: str, guide_image_path: str = None) -> Image.Image:
+        seed = torch.Generator(device="cuda").seed()
+        generator = torch.Generator(device="cuda").manual_seed(seed)
+        logging.debug(f"Using seed {seed} for image generation.")
+
+        if guide_image_path:
+            img = Image.open(guide_image_path)
+            if img.format == "PNG":
+                with open(guide_image_path, "rb") as f:
+                    img_bytes = f.read()
+                filename = os.path.basename(guide_image_path)
+            else:
+                buf = io.BytesIO()
+                img.save(buf, format="PNG")
+                img_bytes = buf.getvalue()
+                filename = Path(guide_image_path).with_suffix(".png").name
+
+            mask_resp = requests.post(
+                self.mask_url + "?accuracy_level=moderate&mask_type=black_and_white",
+                files={"image": (filename, img_bytes, "image/png")},
+            )
+            mask_resp.raise_for_status()
+            mask_bytes = mask_resp.content
+            mask_image = Image.open(io.BytesIO(mask_bytes)).convert("RGB")
+            mask_image.save(f"masks/{filename}", format="PNG")
+
+            init_image = load_image(guide_image_path)
+            generated_image = self.inpainting_pipeline(
+                prompt=prompt,
+                image=init_image.resize((1024, 1024)),
+                mask_image=mask_image.resize((1024, 1024)),
+                generator=generator,
+                num_inference_steps=25,  # steps between 15 and 30 work well for us
+            ).images[0]
+            return generated_image
+        else:
+            # From-scratch generation using a blank image and a white mask
+            init_image = Image.new("RGB", (1024, 1024), "black")
+            mask_image = Image.new("RGB", (1024, 1024), "white")
+
+            generated_image = self.inpainting_pipeline(
+                prompt=prompt,
+                generator=generator,
+            ).images[0]
+            return generated_image
 
 
-def get_generation_client() -> AbstractGenerationClient:
-    provider = os.getenv("GENERATION_PROVIDER", "local").lower()
-    if provider == "local":
-        logging.debug("Using LocalGenerationClient for image generation")
-        return LocalGenerationClient()
-    logging.debug("Using OpenAIGenerationClient for image generation")
-    return OpenAIGenerationClient()
+class OpenAIGenerationClient(AbstractGenerationClient):
+    def __init__(self) -> None:
+        super().__init__()
+        self.client = OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
+
+    def generate_text(self, prompt: str, guide_text: str = None) -> str:
+        raise NotImplementedError(
+            "OpenAI text generation is not implemented in this client."
+        )
+
+    def generate_image(self, prompt: str, guide_image_path: str = None) -> Image.Image:
+        if guide_image_path:
+            with open(guide_image_path, "rb") as guide_file:
+                for attempt in range(1, 4):
+                    try:
+                        response = self.client.images.edit(
+                            image=guide_file, prompt=prompt, n=1, model="dall-e-2"
+                        )
+                        logging.debug(
+                            f"Used generate_edit for image generation on attempt {attempt}"
+                        )
+                        image_base64 = response.data[0].b64_json
+                        return Image.open(io.BytesIO(base64.b64decode(image_base64)))
+                    except Exception as e:
+                        logging.error(f"Attempt {attempt} failed: {e}")
+                        if attempt == 3:
+                            logging.error(
+                                f"Failed to generate image with guide {guide_image_path} after 3 attempts."
+                            )
+                            return None
+        else:
+            for attempt in range(1, 4):
+                try:
+                    response = self.client.images.generate(
+                        prompt=prompt, n=1, model="dall-e-3"
+                    )
+                    logging.debug(
+                        f"Used generate for image generation on attempt {attempt}"
+                    )
+                    image_url = response.data[0].url
+                    return Image.open(requests.get(image_url, stream=True).raw)
+                except Exception as e:
+                    logging.error(f"Attempt {attempt} failed: {e}")
+                    if attempt == 3:
+                        logging.error("Failed to generate image after 3 attempts.")
+                        return None
+
+
+class OpenAITextGenerationClient(AbstractGenerationClient):
+    def __init__(self) -> None:
+        super().__init__()
+        self.client = OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
+
+    def generate_image(self, prompt: str, guide_image_path: str = None) -> Image.Image:
+        raise NotImplementedError(
+            "Image generation is not supported in the text client."
+        )
+
+    def generate_text(self, prompt: str, guide_text: str = None) -> str:
+        messages = [
+            {
+                "role": "system",
+                "content": "You are a helpful assistant that generates text samples for sentiment analysis.",
+            },
+            {"role": "user", "content": prompt},
+        ]
+        if guide_text:
+            messages.append(
+                {"role": "assistant", "content": f"Here is an example: {guide_text}"}
+            )
+
+        for attempt in range(1, 4):
+            try:
+                response = self.client.chat.completions.create(
+                    model="gpt-3.5-turbo", messages=messages, n=1, temperature=0.7
+                )
+                return response.choices[0].message.content.strip()
+            except Exception as e:
+                logging.error(f"Attempt {attempt} failed: {e}")
+                if attempt == 3:
+                    logging.error("Failed to generate text after 3 attempts.")
+                    return None
+
+
+def get_generation_client(modality: str = "image") -> AbstractGenerationClient:
+    provider = os.getenv("GENERATION_PROVIDER", "openai").lower()
+
+    if modality == "image":
+        if provider == "local_inpainting":
+            logging.debug("Using LocalInpaintingClient for image generation")
+            return LocalInpaintingClient()
+        logging.debug("Using OpenAIGenerationClient for image generation")
+        return OpenAIGenerationClient()
+    elif modality == "text":
+        logging.debug("Using OpenAITextGenerationClient for text generation")
+        return OpenAITextGenerationClient()
+    else:
+        raise ValueError(f"Unsupported modality: {modality}")

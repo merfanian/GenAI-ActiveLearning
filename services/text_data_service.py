@@ -8,7 +8,8 @@ import random
 
 from utils.config import AUGMENTED_IMAGES_DIR
 
-_image_dir_path = None
+_text_column = "text"
+_label_column = "label"
 _metadata_df = None
 
 _SPLIT_SEED = 42
@@ -17,17 +18,12 @@ _HOLDOUT_FRAC = 0.20
 _VAL_FRAC = 0.15
 _MIN_TEST_SAMPLES_PER_GROUP = 0
 
-AUGMENTED_METADATA_CSV = AUGMENTED_IMAGES_DIR / "augmented_dataset_metadata.csv"
+AUGMENTED_TEXT_METADATA_CSV = AUGMENTED_IMAGES_DIR / "augmented_text_metadata.csv"
 
 
-def load_and_validate_dataset(
-    image_dir_path: str,
-    metadata_csv_path: str,
-    target_attribute: str,
-    fairness_attribute: str,
-) -> dict:
+def load_and_validate_dataset(metadata_csv_path: str, target_attribute: str, fairness_attribute: str) -> dict:
     logging.debug(
-        f"load_and_validate_dataset called with image_dir_path={image_dir_path}, metadata_csv_path={metadata_csv_path}"
+        f"load_and_validate_dataset called with metadata_csv_path={metadata_csv_path}"
     )
     try:
         df = pd.read_csv(metadata_csv_path)
@@ -38,21 +34,15 @@ def load_and_validate_dataset(
         logging.debug(f"Failed to read metadata CSV: {e}", exc_info=True)
         return {"error": f"Failed to read metadata CSV: {e}"}
 
-    expected_columns = {"filename", target_attribute, fairness_attribute}
+    expected_columns = {"text", target_attribute, fairness_attribute}
     if not expected_columns.issubset(df.columns):
         missing = expected_columns - set(df.columns)
         logging.debug(f"Metadata CSV missing columns: {missing}")
         return {"error": f"Metadata CSV missing columns: {missing}"}
 
     df = df.rename(columns={target_attribute: "label"})
-    filenames = df["filename"].tolist()
-    missing_files = [f for f in filenames if not Path(image_dir_path, f).exists()]
-    if missing_files:
-        logging.debug(f"Image files not found for filenames: {missing_files}")
-        return {"error": f"Image files not found for filenames: {missing_files}"}
-    global _image_dir_path, _metadata_df
-    _image_dir_path = image_dir_path
 
+    global _metadata_df
     logging.debug("Splitting dataset into train/val/holdout/test")
     df["split"] = ""
 
@@ -62,7 +52,7 @@ def load_and_validate_dataset(
     )
 
     # ensure a minimum number of test samples per attribute group
-    attrs = [c for c in df.columns if c not in ("filename", "label", "split")]
+    attrs = [c for c in df.columns if c not in ("text", "label", "split")]
     if attrs:
         test_set = set(test_idx)
         remaining_set = set(train_val_holdout_idx)
@@ -101,19 +91,19 @@ def load_and_validate_dataset(
         f"Metadata DataFrame shape: {_metadata_df.shape}, columns: {_metadata_df.columns.tolist()}"
     )
     logging.info(
-        f"Dataset loaded: directory={image_dir_path}, metadata_csv={metadata_csv_path}, records={len(_metadata_df)}"
+        f"Dataset loaded: metadata_csv={metadata_csv_path}, records={len(_metadata_df)}"
     )
     return {"message": "Dataset loaded successfully."}
 
 
 def get_current_dataset_info(target_attribute: str, fairness_attribute: str) -> dict:
     logging.debug("get_current_dataset_info called")
-    if _metadata_df is None or _image_dir_path is None:
+    if _metadata_df is None:
         return {"error": "Dataset not loaded."}
     df = _metadata_df
-    attrs = [c for c in df.columns if c not in ("filename", "label", "split")]
+    attrs = [c for c in df.columns if c not in ("text", "label", "split")]
     return {
-        "num_images": len(df),
+        "num_texts": len(df),
         "attribute_columns": attrs,
         "num_unique_labels": int(df["label"].nunique()),
         "target_attribute": target_attribute,
@@ -121,18 +111,18 @@ def get_current_dataset_info(target_attribute: str, fairness_attribute: str) -> 
     }
 
 
-def append_to_augmented_metadata_csv(filename: str, attributes: dict, label: str):
+def append_to_augmented_metadata_csv(text: str, attributes: dict, label: str):
     """
-    Append a row to the augmented metadata CSV with filename, attributes, and label.
+    Append a row to the augmented metadata CSV with text, attributes, and label.
     """
     AUGMENTED_IMAGES_DIR.mkdir(parents=True, exist_ok=True)
-    fieldnames = ["filename"] + list(attributes.keys()) + ["label"]
-    file_exists = AUGMENTED_METADATA_CSV.exists()
-    with open(AUGMENTED_METADATA_CSV, mode="a", newline="") as csvfile:
+    fieldnames = ["text"] + list(attributes.keys()) + ["label"]
+    file_exists = AUGMENTED_TEXT_METADATA_CSV.exists()
+    with open(AUGMENTED_TEXT_METADATA_CSV, mode="a", newline="") as csvfile:
         writer = csv.DictWriter(csvfile, fieldnames=fieldnames)
         if not file_exists:
             writer.writeheader()
-        row = {"filename": filename, **attributes, "label": label}
+        row = {"text": text, **attributes, "label": label}
         writer.writerow(row)
 
 
@@ -140,19 +130,18 @@ def load_augmented_metadata_csv() -> list[dict]:
     """
     Load all rows from the augmented metadata CSV as a list of dicts.
     """
-    if not AUGMENTED_METADATA_CSV.exists():
+    if not AUGMENTED_TEXT_METADATA_CSV.exists():
         return []
-    with open(AUGMENTED_METADATA_CSV, mode="r", newline="") as csvfile:
+    with open(AUGMENTED_TEXT_METADATA_CSV, mode="r", newline="") as csvfile:
         reader = csv.DictReader(csvfile)
         return list(reader)
 
 
-def add_augmented_data(filename: str, attributes: dict, llm_acquired_label: str):
+def add_augmented_data(text: str, attributes: dict, llm_acquired_label: str):
     logging.debug(
-        f"add_augmented_data called with generated_filename={filename}, attributes={attributes}, llm_acquired_label={llm_acquired_label}"
+        f"add_augmented_data called with generated_text='{text}', attributes={attributes}, llm_acquired_label={llm_acquired_label}"
     )
-    # Only append to augmented metadata CSV, do not add to _metadata_df
-    append_to_augmented_metadata_csv(filename, attributes, llm_acquired_label)
+    append_to_augmented_metadata_csv(text, attributes, llm_acquired_label)
 
 
 def get_metadata_df() -> pd.DataFrame:
@@ -162,61 +151,49 @@ def get_metadata_df() -> pd.DataFrame:
     return _metadata_df
 
 
-def get_image_paths_and_labels() -> (list[str], list[str]):
-    logging.debug("get_image_paths_and_labels called")
-    if _metadata_df is None or _image_dir_path is None:
+def get_texts_and_labels() -> (list[str], list[str]):
+    logging.debug("get_texts_and_labels called")
+    if _metadata_df is None:
         raise ValueError("Dataset not loaded.")
     df = _metadata_df
-    paths = []
-    for f in df["filename"].tolist():
-        original = Path(_image_dir_path) / f
-        if original.exists():
-            paths.append(str(original))
-        else:
-            paths.append(str(Path(f)))
+    texts = df["text"].tolist()
     labels = df["label"].tolist()
-    logging.debug(f"Returning {len(paths)} image paths and labels")
-    return paths, labels
+    logging.debug(f"Returning {len(texts)} texts and labels")
+    return texts, labels
 
 
-def get_train_val_image_paths_and_labels(
+def get_train_val_texts_and_labels(
     include_augmented: bool = False,
 ) -> (list[str], list[str]):
     logging.debug(
-        f"get_train_val_image_paths_and_labels called with include_augmented={include_augmented}"
+        f"get_train_val_texts_and_labels called with include_augmented={include_augmented}"
     )
-    if _metadata_df is None or _image_dir_path is None:
+    if _metadata_df is None:
         raise ValueError("Dataset not loaded.")
     df = _metadata_df[_metadata_df["split"].isin(["train", "val"])]
-    paths, labels = [], []
-    for f in df["filename"].tolist():
-        original = Path(_image_dir_path) / f
-        paths.append(str(original) if original.exists() else str(Path(f)))
+    texts = df["text"].tolist()
     labels = df["label"].tolist()
-    # Add augmented images if requested
+
     if include_augmented:
         aug_rows = load_augmented_metadata_csv()
         for row in aug_rows:
-            paths.append(Path(AUGMENTED_IMAGES_DIR) / str(row["filename"]))
+            texts.append(row["text"])
             labels.append(row["label"])
     logging.debug(
-        f"Returning {len(paths)} train/val image paths and labels (include_augmented={include_augmented})"
+        f"Returning {len(texts)} train/val texts and labels (include_augmented={include_augmented})"
     )
-    return paths, labels
+    return texts, labels
 
 
-def get_test_image_paths_and_labels() -> (list[str], list[str]):
-    logging.debug("get_test_image_paths_and_labels called")
-    if _metadata_df is None or _image_dir_path is None:
+def get_test_texts_and_labels() -> (list[str], list[str]):
+    logging.debug("get_test_texts_and_labels called")
+    if _metadata_df is None:
         raise ValueError("Dataset not loaded.")
     df = _metadata_df[_metadata_df["split"] == "test"]
-    paths, labels = [], []
-    for f in df["filename"].tolist():
-        original = Path(_image_dir_path) / f
-        paths.append(str(original) if original.exists() else str(Path(f)))
+    texts = df["text"].tolist()
     labels = df["label"].tolist()
-    logging.debug(f"Returning {len(paths)} test image paths and labels")
-    return paths, labels
+    logging.debug(f"Returning {len(texts)} test texts and labels")
+    return texts, labels
 
 
 def get_test_metadata_df() -> pd.DataFrame:
@@ -226,18 +203,15 @@ def get_test_metadata_df() -> pd.DataFrame:
     return _metadata_df[_metadata_df["split"] == "test"].copy()
 
 
-def get_holdout_image_paths_and_labels() -> (list[str], list[str]):
-    logging.debug("get_holdout_image_paths_and_labels called")
-    if _metadata_df is None or _image_dir_path is None:
+def get_holdout_texts_and_labels() -> (list[str], list[str]):
+    logging.debug("get_holdout_texts_and_labels called")
+    if _metadata_df is None:
         raise ValueError("Dataset not loaded.")
     df = _metadata_df[_metadata_df["split"] == "holdout"]
-    paths, labels = [], []
-    for f in df["filename"].tolist():
-        original = Path(_image_dir_path) / f
-        paths.append(str(original) if original.exists() else str(Path(f)))
+    texts = df["text"].tolist()
     labels = df["label"].tolist()
-    logging.debug(f"Returning {len(paths)} holdout image paths and labels")
-    return paths, labels
+    logging.debug(f"Returning {len(texts)} holdout texts and labels")
+    return texts, labels
 
 
 def get_holdout_metadata_df() -> pd.DataFrame:
@@ -245,29 +219,3 @@ def get_holdout_metadata_df() -> pd.DataFrame:
     if _metadata_df is None:
         raise ValueError("Dataset not loaded.")
     return _metadata_df[_metadata_df["split"] == "holdout"].copy()
-
-
-def remove_last_augmented_batch(batch_size: int):
-    """
-    Removes the last 'batch_size' rows from the augmented metadata CSV.
-    """
-    if not AUGMENTED_METADATA_CSV.exists():
-        logging.warning("Augmented metadata CSV not found, nothing to remove.")
-        return
-
-    with open(AUGMENTED_METADATA_CSV, "r", newline="") as f:
-        reader = csv.reader(f)
-        header = next(reader)
-        rows = list(reader)
-
-    if len(rows) < batch_size:
-        logging.warning(f"Cannot remove {batch_size} rows, only {len(rows)} exist. Removing all rows.")
-        rows = []
-    else:
-        rows = rows[:-batch_size]
-
-    with open(AUGMENTED_METADATA_CSV, "w", newline="") as f:
-        writer = csv.writer(f)
-        writer.writerow(header)
-        writer.writerows(rows)
-    logging.info(f"Removed the last {batch_size} rows from the augmented metadata CSV.")
