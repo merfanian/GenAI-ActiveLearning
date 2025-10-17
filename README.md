@@ -1,6 +1,6 @@
-# ChameleonV2
+# Robustify
 
-FastAPI backend for an image classification and fairness-aware data augmentation system.
+FastAPI backend for an image/text classification and task-aware data augmentation system.
 
 ## Requirements
 
