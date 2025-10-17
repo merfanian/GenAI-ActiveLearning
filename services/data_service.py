@@ -121,14 +121,17 @@ def get_current_dataset_info(target_attribute: str, fairness_attribute: str) -> 
     }
 
 
-def append_to_augmented_metadata_csv(filename: str, attributes: dict, label: str):
+def append_to_augmented_metadata_csv(filename: str, attributes: dict, label: str, augmented_data_dir: Path = None):
     """
     Append a row to the augmented metadata CSV with filename, attributes, and label.
     """
-    AUGMENTED_IMAGES_DIR.mkdir(parents=True, exist_ok=True)
+    data_dir = augmented_data_dir or AUGMENTED_IMAGES_DIR
+    data_dir.mkdir(parents=True, exist_ok=True)
+    metadata_csv = data_dir / "augmented_dataset_metadata.csv"
+    
     fieldnames = ["filename"] + list(attributes.keys()) + ["label"]
-    file_exists = AUGMENTED_METADATA_CSV.exists()
-    with open(AUGMENTED_METADATA_CSV, mode="a", newline="") as csvfile:
+    file_exists = metadata_csv.exists()
+    with open(metadata_csv, mode="a", newline="") as csvfile:
         writer = csv.DictWriter(csvfile, fieldnames=fieldnames)
         if not file_exists:
             writer.writeheader()
@@ -136,23 +139,24 @@ def append_to_augmented_metadata_csv(filename: str, attributes: dict, label: str
         writer.writerow(row)
 
 
-def load_augmented_metadata_csv() -> list[dict]:
+def load_augmented_metadata_csv(augmented_data_dir: Path = None) -> list[dict]:
     """
     Load all rows from the augmented metadata CSV as a list of dicts.
     """
-    if not AUGMENTED_METADATA_CSV.exists():
+    data_dir = augmented_data_dir or AUGMENTED_IMAGES_DIR
+    metadata_csv = data_dir / "augmented_dataset_metadata.csv"
+    if not metadata_csv.exists():
         return []
-    with open(AUGMENTED_METADATA_CSV, mode="r", newline="") as csvfile:
+    with open(metadata_csv, mode="r", newline="") as csvfile:
         reader = csv.DictReader(csvfile)
         return list(reader)
 
 
-def add_augmented_data(filename: str, attributes: dict, llm_acquired_label: str):
+def add_augmented_data(filename: str, attributes: dict, llm_acquired_label: str, augmented_data_dir: Path = None):
     logging.debug(
         f"add_augmented_data called with generated_filename={filename}, attributes={attributes}, llm_acquired_label={llm_acquired_label}"
     )
-    # Only append to augmented metadata CSV, do not add to _metadata_df
-    append_to_augmented_metadata_csv(filename, attributes, llm_acquired_label)
+    append_to_augmented_metadata_csv(filename, attributes, llm_acquired_label, augmented_data_dir)
 
 
 def get_metadata_df() -> pd.DataFrame:
@@ -180,29 +184,42 @@ def get_image_paths_and_labels() -> (list[str], list[str]):
 
 
 def get_train_val_image_paths_and_labels(
-    include_augmented: bool = False,
-) -> (list[str], list[str]):
+    include_augmented: bool = False, augmented_data_dir: Path = None, fairness_attribute: str = None
+) -> (list[str], list[str], list[str]):
     logging.debug(
         f"get_train_val_image_paths_and_labels called with include_augmented={include_augmented}"
     )
     if _metadata_df is None or _image_dir_path is None:
         raise ValueError("Dataset not loaded.")
+    
+    if fairness_attribute and fairness_attribute not in _metadata_df.columns:
+        raise ValueError(f"Fairness attribute '{fairness_attribute}' not found in metadata.")
+
     df = _metadata_df[_metadata_df["split"].isin(["train", "val"])]
-    paths, labels = [], []
-    for f in df["filename"].tolist():
-        original = Path(_image_dir_path) / f
-        paths.append(str(original) if original.exists() else str(Path(f)))
-    labels = df["label"].tolist()
+    paths, labels, groups = [], [], []
+    
+    for _, row in df.iterrows():
+        original = Path(_image_dir_path) / row["filename"]
+        paths.append(str(original) if original.exists() else str(Path(row["filename"])))
+        labels.append(row["label"])
+        if fairness_attribute:
+            groups.append(row[fairness_attribute])
+
     # Add augmented images if requested
     if include_augmented:
-        aug_rows = load_augmented_metadata_csv()
+        data_dir = augmented_data_dir or AUGMENTED_IMAGES_DIR
+        aug_rows = load_augmented_metadata_csv(data_dir)
         for row in aug_rows:
-            paths.append(Path(AUGMENTED_IMAGES_DIR) / str(row["filename"]))
+            paths.append(str(Path(data_dir) / row["filename"]))
             labels.append(row["label"])
+            if fairness_attribute:
+                # Augmented data doesn't have group labels, assign a placeholder
+                groups.append("augmented")
+    
     logging.debug(
-        f"Returning {len(paths)} train/val image paths and labels (include_augmented={include_augmented})"
+        f"Returning {len(paths)} train/val image paths, labels, and groups (include_augmented={include_augmented})"
     )
-    return paths, labels
+    return paths, labels, groups
 
 
 def get_test_image_paths_and_labels() -> (list[str], list[str]):
@@ -247,15 +264,18 @@ def get_holdout_metadata_df() -> pd.DataFrame:
     return _metadata_df[_metadata_df["split"] == "holdout"].copy()
 
 
-def remove_last_augmented_batch(batch_size: int):
+def remove_last_augmented_batch(batch_size: int, augmented_data_dir: Path = None):
     """
     Removes the last 'batch_size' rows from the augmented metadata CSV.
     """
-    if not AUGMENTED_METADATA_CSV.exists():
+    data_dir = augmented_data_dir or AUGMENTED_IMAGES_DIR
+    metadata_csv = data_dir / "augmented_dataset_metadata.csv"
+    
+    if not metadata_csv.exists():
         logging.warning("Augmented metadata CSV not found, nothing to remove.")
         return
 
-    with open(AUGMENTED_METADATA_CSV, "r", newline="") as f:
+    with open(metadata_csv, "r", newline="") as f:
         reader = csv.reader(f)
         header = next(reader)
         rows = list(reader)
@@ -266,7 +286,7 @@ def remove_last_augmented_batch(batch_size: int):
     else:
         rows = rows[:-batch_size]
 
-    with open(AUGMENTED_METADATA_CSV, "w", newline="") as f:
+    with open(metadata_csv, "w", newline="") as f:
         writer = csv.writer(f)
         writer.writerow(header)
         writer.writerows(rows)

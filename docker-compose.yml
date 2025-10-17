@@ -22,7 +22,7 @@ services:
       - chameleon-net
 
   mask-generator:
-    image: mask-generator
+    image: mask-generator:latest
     ports:
       - "8001:80"
     networks:

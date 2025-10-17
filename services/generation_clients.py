@@ -12,7 +12,13 @@ from typing import List
 import requests
 import torch
 from PIL import Image
-from diffusers import AutoPipelineForInpainting, DiffusionPipeline, DEISMultistepScheduler
+from diffusers import (
+    AutoPipelineForInpainting,
+    DiffusionPipeline,
+    DEISMultistepScheduler,
+    FluxFillPipeline,
+    StableDiffusionInpaintPipeline,
+)
 from diffusers.utils import load_image
 from dotenv import load_dotenv
 from openai import OpenAI
@@ -30,7 +36,7 @@ class AbstractGenerationClient(ABC):
             self.openai_client = OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
 
     @abstractmethod
-    def generate_image(self, prompt: str, guide_image_path: str = None) -> Image.Image:
+    def generate_image(self, prompt: str, guide_image_path: str = None, mask_level: str = "moderate") -> Image.Image:
         pass
 
     @abstractmethod
@@ -106,11 +112,11 @@ class AbstractGenerationClient(ABC):
                 gender = result[0].get("dominant_gender", "").lower()
             except Exception:
                 logging.error(f"Unexpected response format: {result}")
-                gender = "woman"
+                return "discard"
 
             if gender == "woman":
-                return "0"
-            return "1"
+                return "female"
+            return "male"
 
     def get_text_label(self, text: str, prompt: str, label_options: List[str]) -> str:
         if self.label_mode == "human":
@@ -157,24 +163,26 @@ class LocalInpaintingClient(AbstractGenerationClient):
     def __init__(self) -> None:
         super().__init__()
         self.inpainting_pipeline = AutoPipelineForInpainting.from_pretrained(
-            "Lykon/dreamshaper-8-inpainting",
+            # "Lykon/dreamshaper-8-inpainting",
+            # "OzzyGT/RealVisXL_V4.0_inpainting",
+            "diffusers/stable-diffusion-xl-1.0-inpainting-0.1",
             torch_dtype=torch.float16,
-            variant="fp16",
+            # variant="fp16",
         )
-        self.inpainting_pipeline.scheduler = DEISMultistepScheduler.from_config(self.inpainting_pipeline.scheduler.config)
+        # self.inpainting_pipeline.scheduler = DEISMultistepScheduler.from_config(self.inpainting_pipeline.scheduler.config)
         self.inpainting_pipeline.to("cuda")
 
         self.generation_pipeline = DiffusionPipeline.from_pretrained(
             "stabilityai/stable-diffusion-xl-base-1.0",
             torch_dtype=torch.float16,
             use_safetensors=True,
-            variant="fp16",
+            variant="fp16"
         ).to("cuda")
 
     def generate_text(self, prompt: str, guide_text: str = None) -> str:
         raise NotImplementedError("Local text generation is not supported.")
 
-    def generate_image(self, prompt: str, guide_image_path: str = None) -> Image.Image:
+    def generate_image(self, prompt: str, guide_image_path: str = None, mask_level: str = "moderate") -> Image.Image:
         seed = torch.Generator(device="cuda").seed()
         generator = torch.Generator(device="cuda").manual_seed(seed)
         logging.debug(f"Using seed {seed} for image generation.")
@@ -192,7 +200,7 @@ class LocalInpaintingClient(AbstractGenerationClient):
                 filename = Path(guide_image_path).with_suffix(".png").name
 
             mask_resp = requests.post(
-                self.mask_url + "?accuracy_level=moderate&mask_type=black_and_white",
+                self.mask_url + f"?accuracy_level={mask_level}&mask_type=black_and_white",
                 files={"image": (filename, img_bytes, "image/png")},
             )
             mask_resp.raise_for_status()
@@ -206,7 +214,9 @@ class LocalInpaintingClient(AbstractGenerationClient):
                 image=init_image.resize((1024, 1024)),
                 mask_image=mask_image.resize((1024, 1024)),
                 generator=generator,
-                num_inference_steps=25,  # steps between 15 and 30 work well for us
+                guidance_scale=8.0,
+                num_inference_steps=30,  # steps between 15 and 30 work well for us
+                strength=0.99,
             ).images[0]
             return generated_image
         else:
@@ -214,7 +224,7 @@ class LocalInpaintingClient(AbstractGenerationClient):
             init_image = Image.new("RGB", (1024, 1024), "black")
             mask_image = Image.new("RGB", (1024, 1024), "white")
 
-            generated_image = self.inpainting_pipeline(
+            generated_image = self.generation_pipeline(
                 prompt=prompt,
                 generator=generator,
             ).images[0]
@@ -231,41 +241,72 @@ class OpenAIGenerationClient(AbstractGenerationClient):
             "OpenAI text generation is not implemented in this client."
         )
 
-    def generate_image(self, prompt: str, guide_image_path: str = None) -> Image.Image:
+    def generate_image(self, prompt: str, guide_image_path: str = None, mask_level: str = "moderate") -> Image.Image:
         if guide_image_path:
-            with open(guide_image_path, "rb") as guide_file:
-                for attempt in range(1, 4):
-                    try:
-                        response = self.client.images.edit(
-                            image=guide_file, prompt=prompt, n=1, model="dall-e-2"
+            img = Image.open(guide_image_path)
+            if img.format == "PNG":
+                with open(guide_image_path, "rb") as f:
+                    img_bytes = f.read()
+                filename = os.path.basename(guide_image_path)
+            else:
+                buf = io.BytesIO()
+                img.save(buf, format="PNG")
+                img_bytes = buf.getvalue()
+                filename = Path(guide_image_path).with_suffix(".png").name
+
+            mask_resp = requests.post(
+                self.mask_url + f"?accuracy_level={mask_level}&mask_type=transparent",
+                files={"image": (filename, img_bytes, "image/png")},
+            )
+            mask_resp.raise_for_status()
+            mask_bytes = mask_resp.content
+            mask_image = Image.open(io.BytesIO(mask_bytes)).convert("RGB")
+            mask_image.save(f"masks/{filename}", format="PNG")
+
+            for attempt in range(1, 4):
+                try:
+                    response = self.client.images.edit(
+                        image=(filename, img_bytes, "image/png"),
+                        prompt=prompt,
+                        mask=(filename, mask_bytes, "image/png"),
+                        n=1,
+                        model="dall-e-2",
+                        size="1024x1024",
+                        response_format="b64_json",
+                    )
+                    logging.info(
+                        f"Used images.edit with guide image on attempt {attempt}"
+                    )
+                    image_base64 = response.data[0].b64_json
+                    return Image.open(io.BytesIO(base64.b64decode(image_base64)))
+                except Exception as e:
+                    logging.error(f"Attempt {attempt} failed: {e}")
+                    if attempt == 3:
+                        logging.error(
+                            f"Failed to generate image with guide {guide_image_path} after 3 attempts."
                         )
-                        logging.debug(
-                            f"Used generate_edit for image generation on attempt {attempt}"
-                        )
-                        image_base64 = response.data[0].b64_json
-                        return Image.open(io.BytesIO(base64.b64decode(image_base64)))
-                    except Exception as e:
-                        logging.error(f"Attempt {attempt} failed: {e}")
-                        if attempt == 3:
-                            logging.error(
-                                f"Failed to generate image with guide {guide_image_path} after 3 attempts."
-                            )
-                            return None
+                        return None
         else:
             for attempt in range(1, 4):
                 try:
                     response = self.client.images.generate(
-                        prompt=prompt, n=1, model="dall-e-3"
+                        prompt=prompt,
+                        n=1,
+                        model="dall-e-2",
+                        size="1024x1024",
+                        response_format="b64_json",
                     )
-                    logging.debug(
-                        f"Used generate for image generation on attempt {attempt}"
+                    logging.info(
+                        f"Used images.edit without guide image on attempt {attempt}"
                     )
-                    image_url = response.data[0].url
-                    return Image.open(requests.get(image_url, stream=True).raw)
+                    image_base64 = response.data[0].b64_json
+                    return Image.open(io.BytesIO(base64.b64decode(image_base64)))
                 except Exception as e:
                     logging.error(f"Attempt {attempt} failed: {e}")
                     if attempt == 3:
-                        logging.error("Failed to generate image after 3 attempts.")
+                        logging.error(
+                            "Failed to generate image without guide image after 3 attempts."
+                        )
                         return None
 
 

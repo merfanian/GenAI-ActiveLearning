@@ -1,0 +1,11 @@
+\subsubsection{Analysis of Variable Context Precision}
+The `Variable Context Precision` module controls the trade-off between faithfulness to the guide image and diversity in the generated samples. To analyze this, we run \system with fixed levels of context precision for the exploitation phase:
+\begin{itemize}[leftmargin=*]
+    \item \textbf{Tight-Mask}: Uses only tight bounding box masks around the object of interest.
+    \item \textbf{Medium-Mask}: Uses moderately larger masks.
+    \item \textbf{Loose-Mask}: Uses loose masks that include more of the background.
+\end{itemize}
+
+For each setting, we measure both the final worst-group accuracy and the rejection rate of the generated images by the Quality Validation module. The results, presented in Table~\ref{tab:ablation_context}, reveal a clear trade-off. Tighter masks lead to a lower rejection rate, as the generative model has less freedom to create artifacts, but the resulting performance gain is smaller due to the lower diversity of the generated samples. Conversely, looser masks produce more diverse images that can lead to better performance, but at the cost of a higher rejection rate. This study highlights the importance of context precision and suggests that a dynamic approach to setting the mask tightness could be a valuable direction for future research.
+
+

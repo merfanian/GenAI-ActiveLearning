@@ -1,0 +1,42 @@
+
+\subsubsection*{Experimental Plan}
+\begin{itemize}
+    \item[$\square$] Exp 1.1: Fairness Improvement: Verify \system improves worst-group accuracy.
+    \begin{itemize}
+        \item[$\square$] Train baseline model on original data.
+        \item[$\square$] Run \system to generate augmented dataset $\mathcal{D}_{aug}$.
+        \item[$\square$] Train new model on $\mathcal{D}_{aug}$ and compare worst-group accuracy with baseline.
+    \end{itemize}
+    \item[$\square$] Exp 1.2: Generalizability: Test if $\mathcal{D}_{aug}$ improves other model architectures.
+    \begin{itemize}
+        \item[$\square$] Train 2-3 different models (e.g., EfficientNet, ViT) on original data.
+        \item[$\square$] Train the same models on $\mathcal{D}_{aug}$.
+        \item[$\square$] Compare fairness metrics to show transferability.
+    \end{itemize}
+    \item[$\square$] Exp 1.3: Text Modality: Verify \system improves worst-group accuracy on a text-based task.
+    \begin{itemize}
+        \item[$\square$] Train baseline NLP model on original text data (e.g., sentiment analysis with demographic groups).
+        \item[$\square$] Run \system to generate augmented text dataset $\mathcal{D}_{aug}$.
+        \item[$\square$] Train new NLP model on $\mathcal{D}_{aug}$ and compare worst-group accuracy with baseline.
+    \end{itemize}
+    \item[$\square$] Ablation 2.1: Exploration vs. Exploitation:
+    \begin{itemize}
+        \item[$\square$] Run Exploitation-Only variant ($P_{explore}=0$).
+        \item[$\square$] Run Exploration-Only variant ($P_{explore}=1$).
+        \item[$\square$] Run Fixed-Ratio variant ($P_{explore}=0.5$).
+    \end{itemize}
+    \item[$\square$] Ablation 2.2: CCDS Sampling:
+     \begin{itemize}
+        \item[$\square$] Replace CCDS with random sampling from the worst-group.
+        \item[$\square$] Replace CCDS with sampling only confident misclassifications.
+        \item[$\square$] Replace CCDS with sampling only uncertain classifications.
+    \end{itemize}
+    \item[$\square$] Ablation 2.3: Quality Validation:
+    \begin{itemize}
+        \item[$\square$] Run \system with the quality filter disabled.
+    \end{itemize}
+    \item[$\square$] Ablation 2.4: Saturation Detection:
+    \begin{itemize}
+        \item[$\square$] Run \system with the saturation detection mechanism disabled.
+    \end{itemize}
+\end{itemize}

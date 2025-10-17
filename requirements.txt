@@ -15,3 +15,10 @@ invisible-watermark>=0.2.0
 seaborn
 matplotlib
 deepface
+sentence-transformers>=2.2.0
+opencv-python>=4.5.0
+imbalanced-learn>=0.8.0
+transformers
+torch
+scikit-learn
+google-cloud-translate

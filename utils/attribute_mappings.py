@@ -1,119 +1,183 @@
-# """
-# Attribute and target label mapping for data augmentation.
-#
-# This module provides dictionaries to convert numeric attribute values
-# and target labels into human-readable descriptions for prompt generation
-# and to map back generated labels to numeric codes.
-# """
-#
-# Mapping of numeric attribute values to descriptive strings for image generation prompts
+# Mapping of attribute values to descriptive strings for image generation prompts.
+# This provides a centralized place for standard, reusable mappings.
 
-# attributes = {
-#     "lettuce",
-#     "potato",
-#     "orange",
-#     "lemon",
-#     "garlic",
-#     "cauliflower",
-#     "beetroot",
-#     "pear",
-#     "grapes",
-#     "carrot",
-#     "tomato",
-#     "raddish",
-#     "mango",
-#     "onion",
-#     "pineapple",
-#     "kiwi",
-#     "bell pepper",
-#     "corn",
-#     "chilli pepper",
-#     "banana",
-#     "soy beans",
-#     "sweetcorn",
-#     "cucumber",
-#     "ginger",
-#     "spinach",
-#     "paprika",
-#     "apple",
-#     "jalepeno",
-#     "sweetpotato",
-#     "pomegranate",
-#     "eggplant",
-#     "cabbage",
-#     "watermelon",
-#     "peas",
-#     "turnip",
-# }
-
-attributes = { 
-              "female", "male"
-              }
-
-ATTRIBUTE_VALUE_MAPPING: dict[str, dict[int, str]] = {
-    # "age": {
-    #     # 0: "0 to 6 years old",
-    #     1: "7 to 13 years old",
-    #     2: "14 to 23 years old",
-    #     3: "24 to 45 years old",
-    #     4: "46 to 65 years old",
-    #     5: "66 to 100 years old",
-    # },
-    # "ethnicity": {
-    #     0: "white",
-    #     1: "black",
-    #     2: "asian",
-    #     3: "indian",
-    #     4: "other",
-    # },
-    
-    "label": {s: s for s in attributes},
-    "Wearing_Hat" : {
-        0: "not wearing a hat",
-        1: "wearing a hat",
+# For Adience gender classification
+ADIENCE_GENDER_MAPPING = {
+    "label": {
+        "female": "female",
+        "male": "male",
     },
-    "Male": {
-        0: "female",
-        1: "male",
+    "ethnicity": {
+        "middle eastern": "middle eastern",
+        "white": "white",
+        "black": "black",
+        "asian": "asian",
+        "indian": "indian",
+        "latino hispanic": "latino hispanic"
     }
 }
-
-# Definition of the target label (name and mapping of numeric codes to descriptions)
-TARGET_LABEL_MAPPING: dict[str, object] = {
-    # "name": "gender",
-    # "mapping": {
-    #     0: "female",
-    #     1: "male",
-    # },
-    "name": "gender",
-    "mapping": {s: s for s in attributes},
+ADIENCE_GENDER_TARGET = {
+    "name": "label",
+    "mapping": {
+        "female": "female",
+        "male": "male",
+    },
 }
 
-"""
-# Attribute and target label mapping for data augmentation.
-#
-# This module provides dictionaries to convert numeric attribute values
-# and target labels into human-readable descriptions for prompt generation
-# and to map back generated labels to numeric codes.
-# """
+FFHQ_GENDER_MAPPING = {
+    "gender": {
+        "female": "female",
+        "male": "male",
+    },
+    "ethnicity": {
+        "middle eastern": "middle eastern",
+        "white": "white",
+        "black": "black",
+        "asian": "asian",
+        "indian": "indian",
+        "latino hispanic": "latino hispanic"
+    }
+}
+FFHQ_GENDER_TARGET = {
+    "name": "gender",
+    "mapping": {
+        "female": "female",
+        "male": "male",
+    },
+}
 
-# Mapping of numeric attribute values to descriptive strings for image generation prompts
-# ATTRIBUTE_VALUE_MAPPING: dict[str, dict[int, str]] = {
-#     "blond": {
-#         0: "does not have blond hair",
-#         1: "has blond hair",
-#     },
-#     "male": {
-#         0: "is male",
-#         1: "is female",
-#     },
-# }
-#
-# # Definition of the target label (name and mapping of numeric codes to descriptions)
-# TARGET_LABEL_MAPPING: dict[str, object] = {
-#     "name": "eyeglasses",
-#     "mapping": {
-#         0: "with eyeglasses",
-#         1: "without eyeglasses",
-#     },
-# }
+# For UTKFace race classification
+UTKFACE_RACE_MAPPING = {
+    "race": {
+        0: "a White person",
+        1: "a Black person",
+        2: "an Asian person",
+        3: "an Indian person",
+        4: "an person of other races (such as Hispanic, Latino, Middle Eastern)",
+    }
+}
+UTKFACE_RACE_TARGET = {
+    "name": "race",
+    "mapping": {
+        0: "White",
+        1: "Black",
+        2: "Asian",
+        3: "Indian",
+        4: "Other",
+    },
+}
+
+FRUITS_LABEL_MAPPING = {
+    "label": {
+        "lettuce": "lettuce",
+        "potato": "potato",
+        "orange": "orange",
+        "lemon": "lemon",
+        "garlic": "garlic",
+        "cauliflower": "cauliflower",
+        "beetroot": "beetroot",
+        "pear": "pear",
+        "grapes": "grapes",
+        "carrot": "carrot",
+        "tomato": "tomato",
+        "raddish": "raddish",
+        "mango": "mango",
+        "onion": "onion",
+        "pineapple": "pineapple",
+        "kiwi": "kiwi",
+        "bell pepper": "bell pepper",
+        "corn": "corn",
+        "chilli pepper": "chilli pepper",
+        "banana": "banana",
+        "soy beans": "soy beans",
+        "sweetcorn": "sweetcorn",
+        "cucumber": "cucumber",
+        "ginger": "ginger",
+        "spinach": "spinach",
+        "paprika": "paprika",
+        "apple": "apple",
+        "jalepeno": "jalepeno",
+        "sweetpotato": "sweetpotato",
+        "pomegranate": "pomegranate",
+        "eggplant": "eggplant",
+        "cabbage": "cabbage",
+        "watermelon": "watermelon",
+        "peas": "peas",
+        "turnip": "turnip",
+    }
+}
+FRUITS_LABEL_TARGET = {
+    "name": "label",
+    "mapping": {
+        "lettuce": "lettuce",
+        "potato": "potato",
+        "orange": "orange",
+        "lemon": "lemon",
+        "garlic": "garlic",
+        "cauliflower": "cauliflower",
+        "beetroot": "beetroot",
+        "pear": "pear",
+        "grapes": "grapes",
+        "carrot": "carrot",
+        "tomato": "tomato",
+        "raddish": "raddish",
+        "mango": "mango",
+        "onion": "onion",
+        "pineapple": "pineapple",
+        "kiwi": "kiwi",
+        "bell pepper": "bell pepper",
+        "corn": "corn",
+        "chilli pepper": "chilli pepper",
+        "banana": "banana",
+        "soy beans": "soy beans",
+        "sweetcorn": "sweetcorn",
+        "cucumber": "cucumber",
+        "ginger": "ginger",
+        "spinach": "spinach",
+        "paprika": "paprika",
+        "apple": "apple",
+        "jalepeno": "jalepeno",
+        "sweetpotato": "sweetpotato",
+        "pomegranate": "pomegranate",
+        "eggplant": "eggplant",
+        "cabbage": "cabbage",
+        "watermelon": "watermelon",
+        "peas": "peas",
+        "turnip": "turnip",
+    },
+}
+
+ANIMALS_LABEL_MAPPING = {
+    "label": {
+        "butterfly": "butterfly",
+        "cat": "cat",
+        "chicken": "chicken",
+        "cow": "cow",
+        "dog": "dog",
+        "elephant": "elephant",
+        "horse": "horse",
+        "ragno": "ragno",
+        "sheep": "sheep",
+        "squirrel": "squirrel",
+    },
+}
+
+ANIMALS_LABEL_TARGET = {
+    "name": "label",
+    "mapping": {
+        "butterfly": "butterfly",
+        "cat": "cat",
+        "chicken": "chicken",
+        "cow": "cow",
+        "dog": "dog",
+        "elephant": "elephant",
+        "horse": "horse",
+        "ragno": "ragno",
+        "sheep": "sheep",
+        "squirrel": "squirrel",
+    },
+}
+
+# Default fallbacks for backward compatibility
+ATTRIBUTE_VALUE_MAPPING = ADIENCE_GENDER_MAPPING
+TARGET_LABEL_MAPPING = ADIENCE_GENDER_TARGET

@@ -40,3 +40,69 @@ augmented_images/
 resources/
 trained_models/
 
+# Experiment results and outputs
+**/results/
+**/fruits_new_results/
+**/adience_optimized_results/
+**/guide_image_results/
+**/fruits_results/
+**/adience_results/
+**/notebooks/results/
+**/augmented_images_*/
+**/guide_images_*/
+**/masks/
+
+# JSON files (results, configs, etc.)
+*.json
+**/*_results.json
+**/*_run_*_results.json
+**/*_guide_run_*_results.json
+**/results.json
+**/config.json
+
+# Log files
+*.log
+**/*.log
+**/*_run_*.log
+**/*_guide_run_*.log
+**/logs/
+**/log/
+
+# Jupyter notebook outputs
+**/.ipynb_checkpoints/
+**/notebooks/.ipynb_checkpoints/
+
+# Model files
+*.pth
+*.pkl
+*.pt
+*.h5
+*.ckpt
+*.safetensors
+
+# Data files
+*.csv
+*.tsv
+*.parquet
+*.feather
+*.hdf5
+*.npy
+*.npz
+*.pickle
+*.pkl
+
+# Image files (generated/augmented)
+*.png
+*.jpg
+*.jpeg
+*.gif
+*.bmp
+*.tiff
+*.webp
+
+# Temporary experiment files
+**/temp/
+**/tmp/
+**/cache/
+**/checkpoints/
+

@@ -1,134 +1,124 @@
 import logging
 import torch
-import torch.nn as nn
-import torch.optim as optim
-from torch.utils.data import DataLoader, Dataset
-from torch.nn.utils.rnn import pad_sequence
-from collections import Counter
-import re
+from torch.utils.data import DataLoader, TensorDataset
+from transformers import DistilBertTokenizer, DistilBertForSequenceClassification
+from torch.optim import AdamW
+from sklearn.preprocessing import LabelEncoder
+import numpy as np
+from pathlib import Path
 
 from utils.config import TRAINED_MODELS_DIR
 
-_current_model_path = "trained_models/text_model.pth"
+_tokenizer = None
+_label_encoder = None
 
-def build_vocab(texts, min_freq=2):
-    words = [word for text in texts for word in re.findall(r'\w+', text.lower())]
-    word_counts = Counter(words)
-    vocab = {word for word, count in word_counts.items() if count >= min_freq}
-    return {word: i + 2 for i, word in enumerate(vocab)}, {i + 2: word for i, word in enumerate(vocab)}
+def _get_tokenizer():
+    global _tokenizer
+    if _tokenizer is None:
+        _tokenizer = DistilBertTokenizer.from_pretrained('distilbert-base-uncased')
+    return _tokenizer
 
-class TextDataset(Dataset):
-    def __init__(self, texts, labels, vocab, label_to_idx):
-        self.texts = texts
-        self.labels = labels
-        self.vocab = vocab
-        self.label_to_idx = label_to_idx
+def _get_label_encoder(labels=None, all_labels=None):
+    global _label_encoder
+    if _label_encoder is None:
+        _label_encoder = LabelEncoder()
+        if all_labels is not None:
+            _label_encoder.fit(all_labels)
+        elif labels is not None:
+            _label_encoder.fit(labels)
+    return _label_encoder
 
-    def __len__(self):
-        return len(self.texts)
+def _prepare_data(texts: list[str], labels: list, tokenizer, label_encoder, max_length: int):
+    encodings = tokenizer(texts, truncation=True, padding=True, max_length=max_length, return_tensors='pt')
+    label_ids = label_encoder.transform(labels)
+    dataset = TensorDataset(encodings['input_ids'], encodings['attention_mask'], torch.tensor(label_ids))
+    return dataset
 
-    def __getitem__(self, idx):
-        text = self.texts[idx]
-        label = self.labels[idx]
-        tokenized_text = [self.vocab.get(word, 1) for word in re.findall(r'\w+', text.lower())] # 1 for <unk>
-        return torch.tensor(tokenized_text), self.label_to_idx[label]
+def train_model(
+    texts: list[str],
+    labels: list,
+    config: dict,
+    updated_model_path: str,
+    all_labels: list = None,
+    existing_model_path: str = None,
+    class_weights=None,
+):
+    """
+    Trains or fine-tunes a DistilBERT model.
+    """
+    TRAINED_MODELS_DIR.mkdir(exist_ok=True)
+    output_path = TRAINED_MODELS_DIR / updated_model_path
+    
+    architecture = config["architecture"]
+    hyperparameters = config["hyperparameters"]
 
-class LSTMClassifier(nn.Module):
-    def __init__(self, vocab_size, embedding_dim, hidden_dim, output_dim, n_layers, dropout):
-        super().__init__()
-        self.embedding = nn.Embedding(vocab_size, embedding_dim, padding_idx=0) # 0 for <pad>
-        self.lstm = nn.LSTM(embedding_dim, hidden_dim, num_layers=n_layers,
-                            bidirectional=True, dropout=dropout, batch_first=True)
-        self.fc = nn.Linear(hidden_dim * 2, output_dim)
-        self.dropout = nn.Dropout(dropout)
+    tokenizer = DistilBertTokenizer.from_pretrained(architecture)
+    label_encoder = _get_label_encoder(labels, all_labels=all_labels)
+    num_labels = len(label_encoder.classes_)
 
-    def forward(self, text, text_lengths):
-        embedded = self.dropout(self.embedding(text))
-        packed_embedded = nn.utils.rnn.pack_padded_sequence(embedded, text_lengths.to('cpu'), batch_first=True, enforce_sorted=False)
-        packed_output, (hidden, cell) = self.lstm(packed_embedded)
-        hidden = self.dropout(torch.cat((hidden[-2,:,:], hidden[-1,:,:]), dim=1))
-        return self.fc(hidden)
+    dataset = _prepare_data(texts, labels, tokenizer, label_encoder, hyperparameters["max_length"])
+    dataloader = DataLoader(dataset, batch_size=hyperparameters["batch_size"], shuffle=True)
 
-def collate_batch(batch):
-    label_list, text_list, lengths = [], [], []
-    for (_text, _label) in batch:
-        label_list.append(_label)
-        processed_text = torch.tensor(_text, dtype=torch.int64)
-        text_list.append(processed_text)
-        lengths.append(len(processed_text))
-    return torch.tensor(label_list, dtype=torch.int64), pad_sequence(text_list, batch_first=True, padding_value=0), torch.tensor(lengths)
-
-def train_model(texts: list[str], labels: list[str], existing_model_path: str = None, updated_model_path: str = None) -> str:
-    logging.debug(f"train_model called with {len(texts)} texts, existing_model_path={existing_model_path}")
-    TRAINED_MODELS_DIR.mkdir(parents=True, exist_ok=True)
-
-    unique_labels = sorted(list(set(labels)))
-    label_to_idx = {label: i for i, label in enumerate(unique_labels)}
-    vocab, idx_to_vocab = build_vocab(texts)
-    dataset = TextDataset(texts, labels, vocab, label_to_idx)
-
-    def collate_fn(batch):
-        texts, labels = zip(*batch)
-        text_lengths = torch.tensor([len(text) for text in texts])
-        padded_texts = pad_sequence(texts, batch_first=True, padding_value=0)
-        return padded_texts, torch.tensor(labels), text_lengths
-
-    loader = DataLoader(dataset, batch_size=32, shuffle=True, collate_fn=collate_fn)
-
-    model = LSTMClassifier(len(vocab) + 2, 100, 256, len(unique_labels), 2, 0.5)
     if existing_model_path:
-        checkpoint = torch.load(existing_model_path, map_location="cpu")
-        model.load_state_dict(checkpoint["model_state_dict"])
+        logging.info(f"Loading existing model from {existing_model_path}")
+        model = DistilBertForSequenceClassification.from_pretrained(existing_model_path)
+    else:
+        logging.info(f"Initializing new {architecture} model.")
+        model = DistilBertForSequenceClassification.from_pretrained(architecture, num_labels=num_labels)
 
-    optimizer = optim.Adam(model.parameters())
-    criterion = nn.CrossEntropyLoss()
-    epochs = 5
+    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+    model.to(device)
+    optimizer = AdamW(model.parameters(), lr=hyperparameters["learning_rate"])
+    
+    if class_weights is not None:
+        class_weights = class_weights.to(device)
+
     model.train()
-    for epoch in range(epochs):
-        for texts_batch, labels_batch, lengths_batch in loader:
+    for epoch in range(hyperparameters["epochs"]):
+        for batch in dataloader:
             optimizer.zero_grad()
-            predictions = model(texts_batch, lengths_batch).squeeze(1)
-            loss = criterion(predictions, labels_batch)
+            input_ids, attention_mask, batch_labels = [b.to(device) for b in batch]
+            
+            outputs = model(input_ids, attention_mask=attention_mask, labels=batch_labels)
+            
+            loss = outputs.loss
+            if class_weights is not None:
+                loss_fct = torch.nn.CrossEntropyLoss(weight=class_weights)
+                logits = outputs.logits
+                loss = loss_fct(logits.view(-1, num_labels), batch_labels.view(-1))
+
             loss.backward()
             optimizer.step()
-
-    model_file = TRAINED_MODELS_DIR / "text_model.pth" if not updated_model_path else TRAINED_MODELS_DIR / updated_model_path
-    torch.save({
-        "model_state_dict": model.state_dict(),
-        "vocab": vocab,
-        "label_to_idx": label_to_idx,
-        "idx_to_label": {i: label for label, i in label_to_idx.items()}
-    }, model_file)
-    logging.debug(f"Saved trained text model to {model_file}")
-    return str(model_file)
-
-def predict(model_path: str, texts: list[str]) -> list[dict]:
-    logging.debug(f"predict called with model_path={model_path}, {len(texts)} texts")
-    checkpoint = torch.load(model_path, map_location="cpu")
-    vocab = checkpoint['vocab']
-    idx_to_label = checkpoint['idx_to_label']
     
-    model = LSTMClassifier(len(vocab) + 2, 100, 256, len(idx_to_label), 2, 0.5)
-    model.load_state_dict(checkpoint["model_state_dict"])
+    model.save_pretrained(output_path)
+    tokenizer.save_pretrained(output_path)
+    logging.info(f"Model trained and saved to {output_path}")
+    return str(output_path)
+
+def predict_text(model_path: str, texts: list[str]):
+    """
+    Makes predictions on a list of texts using a trained model.
+    Returns predicted class IDs and their probabilities.
+    """
+    tokenizer = DistilBertTokenizer.from_pretrained(model_path)
+    model = DistilBertForSequenceClassification.from_pretrained(model_path)
+    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+    model.to(device)
     model.eval()
 
-    results = []
+    predictions = []
+    probabilities = []
     with torch.no_grad():
         for text in texts:
-            tokenized = [vocab.get(word, 1) for word in re.findall(r'\w+', text.lower())]
-            tensor = torch.LongTensor(tokenized).unsqueeze(0)
-            length = torch.tensor([len(tokenized)])
-            prediction = model(tensor, length)
-            probs = torch.softmax(prediction, dim=1).squeeze().tolist()
-            pred_idx = torch.argmax(prediction, dim=1).item()
-            pred_label = idx_to_label[pred_idx]
-            prob_dict = {idx_to_label[i]: prob for i, prob in enumerate(probs)}
-            results.append({"predicted_label": pred_label, "probabilities": prob_dict})
-    return results
-
-def set_current_model_path(model_path: str):
-    global _current_model_path
-    _current_model_path = model_path
-
-def get_current_model_path() -> str:
-    return _current_model_path
+            inputs = tokenizer(text, return_tensors="pt", truncation=True, padding=True, max_length=128).to(device)
+            outputs = model(**inputs)
+            logits = outputs.logits
+            
+            probs = torch.nn.functional.softmax(logits, dim=-1)
+            max_prob = torch.max(probs).item()
+            predicted_class_id = torch.argmax(logits, dim=1).item()
+            
+            predictions.append(predicted_class_id)
+            probabilities.append(max_prob)
+            
+    return predictions, probabilities

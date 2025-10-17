@@ -1,6 +1,7 @@
 from pathlib import Path
 
 AUGMENTED_IMAGES_DIR = Path("augmented_images")
+AUGMENTED_TEXT_DIR = Path("augmented_text")
 TRAINED_MODELS_DIR = Path("trained_models")
 
 # --- Dataset Configuration ---

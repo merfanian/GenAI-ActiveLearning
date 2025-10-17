@@ -1,221 +1,117 @@
-import csv
-import logging
-from pathlib import Path
-
 import pandas as pd
 from sklearn.model_selection import train_test_split
-import random
+import logging
 
-from utils.config import AUGMENTED_IMAGES_DIR
-
-_text_column = "text"
-_label_column = "label"
-_metadata_df = None
-
-_SPLIT_SEED = 42
-_TEST_FRAC = 0.20
-_HOLDOUT_FRAC = 0.20
-_VAL_FRAC = 0.15
-_MIN_TEST_SAMPLES_PER_GROUP = 0
-
-AUGMENTED_TEXT_METADATA_CSV = AUGMENTED_IMAGES_DIR / "augmented_text_metadata.csv"
+_train_df = None
+_val_df = None
+_test_df = None
+_augmented_df = None
 
 
-def load_and_validate_dataset(metadata_csv_path: str, target_attribute: str, fairness_attribute: str) -> dict:
-    logging.debug(
-        f"load_and_validate_dataset called with metadata_csv_path={metadata_csv_path}"
-    )
+def load_and_validate_dataset(config: dict):
+    """
+    Loads and validates the dataset based on the provided configuration.
+    """
+    global _train_df, _val_df, _test_df, _augmented_df
+    
+    metadata_csv_path = config["metadata_csv_path"]
+    columns = config.get("columns")
+    text_column = config["text_column"]
+    target_attribute = config["target_attribute"]
+    fairness_attribute = config["fairness_attribute"]
+    label_mapping = config.get("label_mapping")
+    target_fairness_equal = config["target_fairness_equal"]
+
+    logging.info(f"Loading dataset from {metadata_csv_path}...")
     try:
-        df = pd.read_csv(metadata_csv_path)
-        logging.debug(
-            f"Loaded metadata CSV with columns {df.columns.tolist()} and {len(df)} records"
-        )
+        df = pd.read_csv(metadata_csv_path, header=None if columns else 'infer')
+        if columns:
+            df.columns = columns
+        if target_fairness_equal:
+            df = df[[text_column, target_attribute]]
+            config[fairness_attribute] = "label"
+        else:
+            df = df[[text_column, target_attribute, fairness_attribute]]
+        df.rename(columns={text_column: 'text', target_attribute: 'label'}, inplace=True)
+
+
     except Exception as e:
-        logging.debug(f"Failed to read metadata CSV: {e}", exc_info=True)
-        return {"error": f"Failed to read metadata CSV: {e}"}
+        logging.error(f"Failed to load or process CSV: {e}")
+        return {"error": str(e)}
 
-    expected_columns = {"text", target_attribute, fairness_attribute}
-    if not expected_columns.issubset(df.columns):
-        missing = expected_columns - set(df.columns)
-        logging.debug(f"Metadata CSV missing columns: {missing}")
-        return {"error": f"Metadata CSV missing columns: {missing}"}
+    if 'text' not in df.columns or 'label' not in df.columns:
+        error_msg = f"Required columns 'text' and/or 'label' not in the processed DataFrame."
+        logging.error(error_msg)
+        return {"error": error_msg}
 
-    df = df.rename(columns={target_attribute: "label"})
+    # Split the data
+    train_val_df, _test_df = train_test_split(df, test_size=0.2)
+    _train_df, _val_df = train_test_split(train_val_df, test_size=0.1)
+    
+    _augmented_df = pd.DataFrame(columns=df.columns)
+    
+    logging.info(f"Dataset loaded: {_train_df.shape[0]} train, {_val_df.shape[0]} validation, {_test_df.shape[0]} test samples.")
+    return {"message": "Dataset loaded and split successfully."}
 
-    global _metadata_df
-    logging.debug("Splitting dataset into train/val/holdout/test")
-    df["split"] = ""
+def get_train_metadata_df():
+    return _train_df.copy()
 
-    # initial test split
-    train_val_holdout_idx, test_idx = train_test_split(
-        df.index, test_size=_TEST_FRAC, random_state=_SPLIT_SEED
-    )
-
-    # ensure a minimum number of test samples per attribute group
-    attrs = [c for c in df.columns if c not in ("text", "label", "split")]
-    if attrs:
-        test_set = set(test_idx)
-        remaining_set = set(train_val_holdout_idx)
-        rng = random.Random(_SPLIT_SEED)
-        for _, group_df in df.groupby(attrs):
-            group_indices = set(group_df.index)
-            current = test_set & group_indices
-            missing = _MIN_TEST_SAMPLES_PER_GROUP - len(current)
-            if missing > 0:
-                available = list(group_indices - test_set)
-                rng.shuffle(available)
-                selected = available[:missing]
-                test_set.update(selected)
-                remaining_set.difference_update(selected)
-        test_idx = list(test_set)
-        train_val_holdout_idx = list(remaining_set)
-
-    test_frac_actual = len(test_idx) / len(df)
-    holdout_frac_rel = _HOLDOUT_FRAC / (1 - test_frac_actual)
-    train_val_idx, holdout_idx = train_test_split(
-        train_val_holdout_idx, test_size=holdout_frac_rel, random_state=_SPLIT_SEED
-    )
-    val_frac_rel = _VAL_FRAC / (1 - test_frac_actual - holdout_frac_rel)
-    train_idx, val_idx = train_test_split(
-        train_val_idx, test_size=val_frac_rel, random_state=_SPLIT_SEED
-    )
-    df.loc[train_idx, "split"] = "train"
-    df.loc[val_idx, "split"] = "val"
-    df.loc[holdout_idx, "split"] = "holdout"
-    df.loc[test_idx, "split"] = "test"
-    logging.info(
-        f"Dataset splits: train={len(train_idx)}, val={len(val_idx)}, holdout={len(holdout_idx)}, test={len(test_idx)}"
-    )
-    _metadata_df = df.copy()
-    logging.debug(
-        f"Metadata DataFrame shape: {_metadata_df.shape}, columns: {_metadata_df.columns.tolist()}"
-    )
-    logging.info(
-        f"Dataset loaded: metadata_csv={metadata_csv_path}, records={len(_metadata_df)}"
-    )
-    return {"message": "Dataset loaded successfully."}
-
-
-def get_current_dataset_info(target_attribute: str, fairness_attribute: str) -> dict:
-    logging.debug("get_current_dataset_info called")
-    if _metadata_df is None:
-        return {"error": "Dataset not loaded."}
-    df = _metadata_df
-    attrs = [c for c in df.columns if c not in ("text", "label", "split")]
-    return {
-        "num_texts": len(df),
-        "attribute_columns": attrs,
-        "num_unique_labels": int(df["label"].nunique()),
-        "target_attribute": target_attribute,
-        "fairness_attribute": fairness_attribute,
-    }
-
-
-def append_to_augmented_metadata_csv(text: str, attributes: dict, label: str):
+def get_train_val_texts_and_labels(include_augmented: bool = False):
     """
-    Append a row to the augmented metadata CSV with text, attributes, and label.
+    Returns the training and validation texts and labels.
+    Optionally includes augmented data.
     """
-    AUGMENTED_IMAGES_DIR.mkdir(parents=True, exist_ok=True)
-    fieldnames = ["text"] + list(attributes.keys()) + ["label"]
-    file_exists = AUGMENTED_TEXT_METADATA_CSV.exists()
-    with open(AUGMENTED_TEXT_METADATA_CSV, mode="a", newline="") as csvfile:
-        writer = csv.DictWriter(csvfile, fieldnames=fieldnames)
-        if not file_exists:
-            writer.writeheader()
-        row = {"text": text, **attributes, "label": label}
-        writer.writerow(row)
+    df_to_use = pd.concat([_train_df, _val_df])
+    if include_augmented and not _augmented_df.empty:
+        df_to_use = pd.concat([_augmented_df, df_to_use])
+    
+    return df_to_use['text'].tolist(), df_to_use['label'].tolist()
 
+def get_test_metadata_df():
+    return _test_df.copy()
 
-def load_augmented_metadata_csv() -> list[dict]:
+def get_test_texts_and_labels():
     """
-    Load all rows from the augmented metadata CSV as a list of dicts.
+    Returns the test texts and labels.
     """
-    if not AUGMENTED_TEXT_METADATA_CSV.exists():
-        return []
-    with open(AUGMENTED_TEXT_METADATA_CSV, mode="r", newline="") as csvfile:
-        reader = csv.DictReader(csvfile)
-        return list(reader)
+    return _test_df['text'].tolist(), _test_df['label'].tolist()
+
+def add_augmented_data(new_data: list[dict], config: dict):
+    """
+    Adds new augmented text data to the internal store.
+    `new_data` is a list of dicts, e.g., [{'text': '...', 'label': ...}]
+    """
+    global _augmented_df
+    new_df = pd.DataFrame(new_data)
+    new_df.rename(columns={config["text_column"]: 'text', config["target_attribute"]: 'label'}, inplace=True)
+    if config.get("label_mapping"):
+        # Check if labels are already integers
+        if new_df['label'].dtype != 'int':
+            label_to_int = {v: k for k, v in config["label_mapping"].items()}
+            new_df['label'] = new_df['label'].map(label_to_int)
+    _augmented_df = pd.concat([_augmented_df, new_df], ignore_index=True)
+    logging.info(f"Added {len(new_data)} augmented samples. Total augmented data: {_augmented_df.shape[0]}")
+
+def remove_last_augmented_batch(batch_size: int):
+    """
+    Removes the last N samples from the augmented data store.
+    """
+    global _augmented_df
+    if not _augmented_df.empty and len(_augmented_df) >= batch_size:
+        _augmented_df = _augmented_df.iloc[:-batch_size]
+        logging.info(f"Removed last {batch_size} augmented samples.")
+
+def get_final_training_df():
+    """
+    Returns the final training dataframe including original and augmented data.
+    """
+    return pd.concat([_train_df, _val_df, _augmented_df], ignore_index=True)
 
 
-def add_augmented_data(text: str, attributes: dict, llm_acquired_label: str):
-    logging.debug(
-        f"add_augmented_data called with generated_text='{text}', attributes={attributes}, llm_acquired_label={llm_acquired_label}"
-    )
-    append_to_augmented_metadata_csv(text, attributes, llm_acquired_label)
-
-
-def get_metadata_df() -> pd.DataFrame:
-    logging.debug("get_metadata_df called")
-    if _metadata_df is None:
-        raise ValueError("Dataset not loaded.")
-    return _metadata_df
-
-
-def get_texts_and_labels() -> (list[str], list[str]):
-    logging.debug("get_texts_and_labels called")
-    if _metadata_df is None:
-        raise ValueError("Dataset not loaded.")
-    df = _metadata_df
-    texts = df["text"].tolist()
-    labels = df["label"].tolist()
-    logging.debug(f"Returning {len(texts)} texts and labels")
-    return texts, labels
-
-
-def get_train_val_texts_and_labels(
-    include_augmented: bool = False,
-) -> (list[str], list[str]):
-    logging.debug(
-        f"get_train_val_texts_and_labels called with include_augmented={include_augmented}"
-    )
-    if _metadata_df is None:
-        raise ValueError("Dataset not loaded.")
-    df = _metadata_df[_metadata_df["split"].isin(["train", "val"])]
-    texts = df["text"].tolist()
-    labels = df["label"].tolist()
-
-    if include_augmented:
-        aug_rows = load_augmented_metadata_csv()
-        for row in aug_rows:
-            texts.append(row["text"])
-            labels.append(row["label"])
-    logging.debug(
-        f"Returning {len(texts)} train/val texts and labels (include_augmented={include_augmented})"
-    )
-    return texts, labels
-
-
-def get_test_texts_and_labels() -> (list[str], list[str]):
-    logging.debug("get_test_texts_and_labels called")
-    if _metadata_df is None:
-        raise ValueError("Dataset not loaded.")
-    df = _metadata_df[_metadata_df["split"] == "test"]
-    texts = df["text"].tolist()
-    labels = df["label"].tolist()
-    logging.debug(f"Returning {len(texts)} test texts and labels")
-    return texts, labels
-
-
-def get_test_metadata_df() -> pd.DataFrame:
-    logging.debug("get_test_metadata_df called")
-    if _metadata_df is None:
-        raise ValueError("Dataset not loaded.")
-    return _metadata_df[_metadata_df["split"] == "test"].copy()
-
-
-def get_holdout_texts_and_labels() -> (list[str], list[str]):
-    logging.debug("get_holdout_texts_and_labels called")
-    if _metadata_df is None:
-        raise ValueError("Dataset not loaded.")
-    df = _metadata_df[_metadata_df["split"] == "holdout"]
-    texts = df["text"].tolist()
-    labels = df["label"].tolist()
-    logging.debug(f"Returning {len(texts)} holdout texts and labels")
-    return texts, labels
-
-
-def get_holdout_metadata_df() -> pd.DataFrame:
-    logging.debug("get_holdout_metadata_df called")
-    if _metadata_df is None:
-        raise ValueError("Dataset not loaded.")
-    return _metadata_df[_metadata_df["split"] == "holdout"].copy()
+def clear_augmented_data():
+    """
+    Clears all augmented data.
+    """
+    global _augmented_df
+    _augmented_df = pd.DataFrame(columns=_train_df.columns)
+    logging.info("Cleared all augmented data.")

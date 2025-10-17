@@ -36,6 +36,7 @@ def parse_fold_files(dataset_dir: Path) -> List[dict]:
     for fold_file in sorted(dataset_dir.glob("fold_*_data.txt")):
         with open(fold_file, "r", newline="") as f:
             reader = csv.DictReader(f, delimiter="\t")
+            print(fold_file.name)
             for row in reader:
                 gender = row.get("gender", "").lower()
                 if gender not in {"m", "f"}:
@@ -45,7 +46,7 @@ def parse_fold_files(dataset_dir: Path) -> List[dict]:
                 user_id = row.get("user_id")
                 face_id = row.get("face_id")
                 original_image = row.get("original_image")
-                filename = f"aligned/{user_id}/coarse_tilt_aligned_face.{face_id}.{original_image}"
+                filename = f"aligned/{user_id}/landmark_aligned_face.{face_id}.{original_image}"
                 entries.append({"filename": filename, "age": age, "label": label})
     return entries
 
@@ -63,9 +64,9 @@ def create_metadata_csv(entries: List[dict], csv_path: Path) -> None:
 
 def main(out_dir: str = "adience") -> None:
     out_path = Path(out_dir)
-    zip_file = out_path / "adience.zip"
-    download_file(DATA_URL, zip_file)
-    extract_zip(zip_file, out_path)
+    # zip_file = out_path / "adience.zip"
+    # download_file(DATA_URL, zip_file)
+    # extract_zip(zip_file, out_path)
     entries = parse_fold_files(out_path)
     create_metadata_csv(entries, out_path / "adience_metadata.csv")
     print("Done")
@@ -73,6 +74,7 @@ def main(out_dir: str = "adience") -> None:
 
 if __name__ == "__main__":
     import argparse
+
     parser = argparse.ArgumentParser(description="Download the Adience dataset and create metadata CSV")
     parser.add_argument("out_dir", nargs="?", default="adience", help="Output directory")
     args = parser.parse_args()
